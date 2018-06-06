@@ -9,6 +9,7 @@
 # propagated, or distributed except according to the terms contained in the
 # LICENSE.md file.
 
+from abc import ABC, abstractmethod
 from binascii import hexlify, unhexlify
 from decimal import Decimal
 
@@ -16,8 +17,12 @@ from .sig import Sighash
 from .script import (ScriptBuilder, P2wpkhV0Script, P2wshV0Script, P2shScript, NulldataScript, ScriptSig,
                      CoinBaseScriptSig, ScriptPubKey)
 from ..lib.types import Immutable, Mutable, Jsonizable, HexSerializable, cached
-from ..lib.parsing import Parser, TransactionParser, Stream
-from ..constants import Constants
+from ..lib.parsing import (
+    BitcoinTxParser,
+    Parser,
+    TransactionParser,
+    Stream,
+)
 
 
 # noinspection PyUnresolvedReferences
@@ -180,23 +185,29 @@ class CoinBaseTxIn(TxIn):
 
 
 # noinspection PyUnresolvedReferences
-class TxOut(Immutable, HexSerializable, Jsonizable):
+class TxOut(ABC, Immutable, HexSerializable, Jsonizable):
     """
     : value - value of the output <int>
     : n - sequence number
     : script_pubkey - ScriptPubkey object
     """
 
-    @classmethod
-    def from_json(cls, dic):
-        return cls(int(Decimal(dic['value']) * Constants.get('decimals')),
-                   dic['n'],
-                   ScriptBuilder.identify(bytearray(unhexlify(dic['scriptPubKey']['hex']))))
+    constants = None
 
-    def __init__(self, value: int, n: int, script_pubkey: ScriptPubKey):
+    @classmethod
+    def from_json(cls, dic, constants):
+        return cls(
+            int(Decimal(dic['value']) * constants.decimals),
+            dic['n'],
+            ScriptBuilder.identify(bytearray(unhexlify(dic['scriptPubKey']['hex']))),
+            constants,
+        )
+
+    def __init__(self, value: int, n: int, script_pubkey: ScriptPubKey, constants):
         object.__setattr__(self, 'value', value)
         object.__setattr__(self, 'n', n)
         object.__setattr__(self, 'script_pubkey', script_pubkey)
+        object.__setattr__(self, 'constants', constants)
 
     @property
     def type(self):
@@ -216,9 +227,11 @@ class TxOut(Immutable, HexSerializable, Jsonizable):
         pass
 
     def to_json(self):
-        return {'value': str(Decimal(self.value) * Constants.get('decimals')),
-                'n': self.n,
-                'scriptPubKey': self.script_pubkey.to_json()}
+        return {
+            'value': str(Decimal(self.value) * self.constants.decimals),
+            'n': self.n,
+            'scriptPubKey': self.script_pubkey.to_json()
+        }
 
     @cached
     def serialize(self):
@@ -231,27 +244,41 @@ class TxOut(Immutable, HexSerializable, Jsonizable):
     def is_dust(self, size_to_relay_fee):
         return self.value < self.get_dust_threshold(size_to_relay_fee)
 
+    @abstractmethod
+    def get_dust_threshold(self, size_to_relay_fee):
+        ...
+
+    def __str__(self):
+        return "TxOut(value={}, n={}, scriptPubKey='{}')".format(self.value, self.n, self.script_pubkey)
+
+
+class BitcoinTxOut(TxOut):
+
     def get_dust_threshold(self, size_to_relay_fee):
 
         if isinstance(self.script_pubkey, NulldataScript):
             return 0
 
-        return 0.01
-        #size = len(self.serialize())
+        size = len(self.serialize())
 
-        '''
         if isinstance(self.script_pubkey, (P2wpkhV0Script, P2wshV0Script)):
             # sum the sizes of the parts of a transaction input
             # with 75 % segwit discount applied to the script size.
             size += (32 + 4 + 1 + (107 // Witness.scale_factor) + 4)
         else:
             size += (32 + 4 + 1 + 107 + 4)
-        '''
 
-        #return 3 * size_to_relay_fee(size)
+        return 3 * size_to_relay_fee(size)
 
-    def __str__(self):
-        return "TxOut(value={}, n={}, scriptPubKey='{}')".format(self.value, self.n, self.script_pubkey)
+
+class PeercoinTxOut(TxOut):
+
+    def get_dust_threshold(self, size_to_relay_fee):
+
+        if isinstance(self.script_pubkey, NulldataScript):
+            return 0
+
+        return 0.01
 
 
 # noinspection PyUnresolvedReferences
@@ -340,7 +367,7 @@ class Witness(Immutable, HexSerializable, Jsonizable):
 
 
 # noinspection PyUnresolvedReferences
-class Transaction(Immutable, HexSerializable, Jsonizable):
+class Transaction(ABC, Immutable, HexSerializable, Jsonizable):
 
     ''' assemble transaction
     : version - tranasction version (default 1)
@@ -352,47 +379,21 @@ class Transaction(Immutable, HexSerializable, Jsonizable):
 
     max_version = 2
     max_weight = 400000
+    constants = None
 
     @classmethod
-    def unhexlify(cls, string):
-        return cls.deserialize(bytearray(unhexlify(string)))
+    def unhexlify(cls, string, tx_parser, constants):
+        return cls.deserialize(bytearray(unhexlify(string)), tx_parser, constants)
 
     @classmethod
-    def deserialize(cls, string):
-        parser = TransactionParser(string)
-        result = parser.get_next_tx(cls is MutableTransaction)
-        if parser:
-            raise ValueError('Leftover data after transaction')
-        return result
+    @abstractmethod
+    def deserialize(cls, string, tx_parser, constants):
+        ...
 
     @classmethod
-    def from_json(cls, tx_json):
-
-        tx = cls(version=tx_json['version'],
-                 timestamp=tx_json['time'],
-                 locktime=Locktime(tx_json['locktime']),
-                 txid=tx_json['txid'],
-                 ins=[TxIn.from_json(txin_json) for txin_json in tx_json['vin']],
-                 outs=[TxOut.from_json(txout_json) for txout_json in tx_json['vout']])
-
-        return tx
-
-    def __init__(self, version: int, timestamp: int, ins: list, outs: list,
-                 locktime: Locktime, txid: str=None) -> None:
-
-        object.__setattr__(self, 'version', version)
-        object.__setattr__(self, 'timestamp', timestamp)
-        object.__setattr__(self, 'ins', tuple(ins))
-        object.__setattr__(self, 'outs', tuple(outs))
-        object.__setattr__(self, 'locktime', locktime)
-        object.__setattr__(self, '_txid', txid)
-
-        if txid != self.txid and txid is not None:
-            raise ValueError('txid {} does not match transaction data {}'.format(txid, self.hexlify()))
-        # if not self.ins or not self.outs:
-        #     raise ValueError('Empty txin or txout array')
-        # if len(self.serialize()) > Block.max_size:
-        #     raise ValueError('Invalid transaction size: {}'.format(len(self.serialize())))
+    @abstractmethod
+    def from_json(cls, tx_json, constants):
+        ...
 
     def _base_size(self):
         return len(self.serialize())
@@ -428,32 +429,14 @@ class Transaction(Immutable, HexSerializable, Jsonizable):
         from math import ceil
         return ceil(self.weight / 4)
 
+    @abstractmethod
     def to_json(self):
-        return {'hex': self.hexlify(),
-                'txid': self.txid,
-                'hash': self.hash(),
-                'size': self.size,
-                'vsize': self.vsize,
-                'version': self.version,
-                'timestamp': self.timestamp,
-                'locktime': self.locktime.n,
-                'vin': [txin.to_json() for txin in self.ins],
-                'vout': [txout.to_json() for txout in self.outs]}
+        ...
 
     @cached
+    @abstractmethod
     def serialize(self):
-        from itertools import chain
-        result = Stream()
-        result << self.version.to_bytes(4, 'little')
-        result << self.timestamp.to_bytes(4, 'little')
-        result << Parser.to_varint(len(self.ins))
-        # the most efficient way to flatten a list in python
-        result << bytearray(chain.from_iterable(txin.serialize() for txin in self.ins))
-        result << Parser.to_varint(len(self.outs))
-        # the most efficient way to flatten a list in python
-        result << bytearray(chain.from_iterable(txout.serialize() for txout in self.outs))
-        result << self.locktime
-        return result.serialize()
+        ...
 
     def is_replaceable(self):
         return any(txin.is_replaceable() for txin in self.ins)
@@ -463,10 +446,10 @@ class Transaction(Immutable, HexSerializable, Jsonizable):
         if len(prev_scripts) != len(self.ins):
             raise ValueError('Prev scripts provided are a different number than txins')
 
-        if not 1 <= self.version <= Transaction.max_version:
+        if not 1 <= self.version <= self.max_version:
             return False
 
-        if self.weight > Transaction.max_weight:
+        if self.weight > self.max_weight:
             return False
 
         for prev, txin in zip(prev_scripts, self.ins):
@@ -489,8 +472,9 @@ class Transaction(Immutable, HexSerializable, Jsonizable):
     def is_coinbase(self):
         return len(self.ins) == 1 and isinstance(self.ins[0], CoinBaseTxIn)
 
+    @abstractmethod
     def to_mutable(self):
-        return MutableTransaction(self.version, [txin.to_mutable() for txin in self.ins], self.outs, self.locktime)
+        ...
 
     def get_digest_preimage(self, index, prev_script, sighash=Sighash('ALL')):
 
@@ -540,8 +524,174 @@ class Transaction(Immutable, HexSerializable, Jsonizable):
     def get_digest(self, txin, prev_script, sighash=Sighash('ALL')):
         return self.get_digest_preimage(txin, prev_script, sighash).hash256()
 
+    @abstractmethod
     def __str__(self):
-        return ('Transaction(version={}, '
+        ...
+
+    def __eq__(self, other):
+        return self.hash() == other.hash()
+
+
+class BitcoinTransaction(Transaction):
+
+    def __init__(self, version: int, ins: list, outs: list,
+                 locktime: Locktime, constants, txid: str=None) -> None:
+
+        object.__setattr__(self, 'version', version)
+        object.__setattr__(self, 'ins', tuple(ins))
+        object.__setattr__(self, 'outs', tuple(outs))
+        object.__setattr__(self, 'locktime', locktime)
+        object.__setattr__(self, '_txid', txid)
+        object.__setattr__(self, 'constants', constants)
+
+        if txid != self.txid and txid is not None:
+            raise ValueError('txid {} does not match transaction data {}'.format(txid, self.hexlify()))
+        # if not self.ins or not self.outs:
+        #     raise ValueError('Empty txin or txout array')
+        # if len(self.serialize()) > Block.max_size:
+        #     raise ValueError('Invalid transaction size: {}'.format(len(self.serialize())))
+
+    @classmethod
+    def deserialize(cls, string, tx_parser, constants):
+        parser = tx_parser(string, constants)
+        result = parser.get_next_tx(False)
+        if parser:
+            raise ValueError('Leftover data after transaction')
+        return result
+
+    @classmethod
+    def from_json(cls, tx_json, constants):
+        return cls(
+            version=tx_json['version'],
+            locktime=Locktime(tx_json['locktime']),
+            txid=tx_json['txid'],
+            ins=[TxIn.from_json(txin_json) for txin_json in tx_json['vin']],
+            outs=[TxOut.from_json(txout_json) for txout_json in tx_json['vout']],
+            constants=constants,
+        )
+
+    def to_json(self):
+        return {
+            'hex': self.hexlify(),
+            'txid': self.txid,
+            'hash': self.hash(),
+            'size': self.size,
+            'vsize': self.vsize,
+            'version': self.version,
+            'locktime': self.locktime.n,
+            'vin': [txin.to_json() for txin in self.ins],
+            'vout': [txout.to_json() for txout in self.outs],
+        }
+
+    @cached
+    def serialize(self):
+        from itertools import chain
+        result = Stream()
+        result << self.version.to_bytes(4, 'little')
+        result << Parser.to_varint(len(self.ins))
+        # the most efficient way to flatten a list in python
+        result << bytearray(chain.from_iterable(txin.serialize() for txin in self.ins))
+        result << Parser.to_varint(len(self.outs))
+        # the most efficient way to flatten a list in python
+        result << bytearray(chain.from_iterable(txout.serialize() for txout in self.outs))
+        result << self.locktime
+        return result.serialize()
+
+    def to_mutable(self):
+        return BitcoinMutableTx(
+            self.version,
+            [txin.to_mutable() for txin in self.ins],
+            self.outs,
+            self.locktime,
+            self.constants,
+        )
+
+    def __str__(self):
+        return ('BitcoinTransaction(version={}, '
+                'ins=[{}], '
+                'outs=[{}], '
+                'locktime={}, '.format(self.version,
+                                       ', '.join(str(txin) for txin in self.ins),
+                                       ', '.join(str(out) for out in self.outs),
+                                       self.locktime,))
+
+
+class PeercoinTransaction(Transaction):
+
+    def __init__(self, version: int, timestamp: int, ins: list, outs: list,
+                 locktime: Locktime, constants, txid: str=None) -> None:
+
+        object.__setattr__(self, 'version', version)
+        object.__setattr__(self, 'timestamp', timestamp)
+        object.__setattr__(self, 'ins', tuple(ins))
+        object.__setattr__(self, 'outs', tuple(outs))
+        object.__setattr__(self, 'locktime', locktime)
+        object.__setattr__(self, '_txid', txid)
+        object.__setattr__(self, 'constants', constants)
+
+        if txid != self.txid and txid is not None:
+            raise ValueError('txid {} does not match transaction data {}'.format(txid, self.hexlify()))
+
+    @classmethod
+    def deserialize(cls, string, tx_parser, constants):
+        parser = tx_parser(string, constants)
+        result = parser.get_next_tx(False)
+        if parser:
+            raise ValueError('Leftover data after transaction')
+        return result
+
+    @classmethod
+    def from_json(cls, tx_json, constants):
+        return cls(
+            version=tx_json['version'],
+            timestamp=tx_json['time'],
+            locktime=Locktime(tx_json['locktime']),
+            txid=tx_json['txid'],
+            ins=[TxIn.from_json(txin_json) for txin_json in tx_json['vin']],
+            outs=[TxOut.from_json(txout_json) for txout_json in tx_json['vout']],
+            constants=constants,
+        )
+
+    def to_json(self):
+        return {
+            'hex': self.hexlify(),
+            'txid': self.txid,
+            'hash': self.hash(),
+            'size': self.size,
+            'vsize': self.vsize,
+            'version': self.version,
+            'timestamp': self.timestamp,
+            'locktime': self.locktime.n,
+            'vin': [txin.to_json() for txin in self.ins],
+            'vout': [txout.to_json() for txout in self.outs],
+        }
+
+    @cached
+    def serialize(self):
+        from itertools import chain
+        result = Stream()
+        result << self.version.to_bytes(4, 'little')
+        result << self.timestamp.to_bytes(4, 'little')
+        result << Parser.to_varint(len(self.ins))
+        # the most efficient way to flatten a list in python
+        result << bytearray(chain.from_iterable(txin.serialize() for txin in self.ins))
+        result << Parser.to_varint(len(self.outs))
+        # the most efficient way to flatten a list in python
+        result << bytearray(chain.from_iterable(txout.serialize() for txout in self.outs))
+        result << self.locktime
+        return result.serialize()
+
+    def to_mutable(self):
+        return PeercoinMutableTx(
+            self.version,
+            [txin.to_mutable() for txin in self.ins],
+            self.outs,
+            self.locktime,
+            constants,
+        )
+
+    def __str__(self):
+        return ('PeercoinTransaction(version={}, '
                 'ins=[{}], '
                 'outs=[{}], '
                 'locktime={}, '
@@ -551,11 +701,72 @@ class Transaction(Immutable, HexSerializable, Jsonizable):
                                        self.locktime,
                                        self.timestamp))
 
-    def __eq__(self, other):
-        return self.hash() == other.hash()
+
+class BitcoinMutableTx(Mutable, BitcoinTransaction):
+
+    def __init__(self, version: int, ins: list,
+                 outs: list, locktime: Locktime, constants) -> None:
+
+        super().__init__(version, ins, outs, locktime, constants)
+        ins = []
+        for txin in self.ins:
+            if isinstance(txin, MutableTxIn):
+                ins.append(txin)
+            elif isinstance(txin, TxIn):
+                ins.append(txin.to_mutable())
+            else:
+                raise ValueError('Expected objects of type `TxIn` or `MutableTxIn`, got {} instead'.format(type(txin)))
+        self.ins = ins
+        self.outs = list(self.outs)
+
+    @classmethod
+    def deserialize(cls, string, tx_parser, constants):
+        parser = tx_parser(string, constants)
+        result = parser.get_next_tx(True)
+        if parser:
+            raise ValueError('Leftover data after transaction')
+        return result
+
+    def to_immutable(self):
+        return Transaction(self.version, [txin.to_immutable() for txin in self.ins], self.outs, self.locktime)
+
+    def to_segwit(self):
+        return MutableSegWitTransaction(self.version, self.ins, self.outs, self.locktime)
+
+    def spend_single(self, index, txout, solver):
+
+        sighashes = solver.get_sighashes()
+        prev_script = solver.get_prev_script() if solver.has_prev_script() else txout.script_pubkey
+
+        if len(sighashes) == 0:
+            script_sig, witness = solver.solve()
+        elif len(sighashes) == 1:
+            script_sig, witness = solver.solve(self.get_digest(index, prev_script, sighashes[0]))
+        else:
+            digests = []
+            for sighash in sighashes:
+                digests.append(self.get_digest(index, prev_script, sighash))
+            script_sig, witness = solver.solve(*digests)
+
+        if witness:
+            raise ValueError('Trying to spend segwit output with non-segwit transaction!')
+
+        self.ins[index].script_sig = script_sig
+
+    def spend(self, txouts, solvers):
+        if any(solver.solves_segwit() for solver in solvers):
+            return self.to_segwit().spend(txouts, solvers)
+        if len(solvers) != len(self.ins) or len(txouts) != len(solvers):
+            raise ValueError('{} solvers and {} txouts provided for {} inputs'.format(len(solvers),
+                                                                                      len(txouts),
+                                                                                      len(self.ins)))
+        for i, (txout, solver) in enumerate(zip(txouts, solvers)):
+            self.spend_single(i, txout, solver)
+
+        return self.to_immutable()
 
 
-class MutableTransaction(Mutable, Transaction):
+class PeercoinMutableTx(Mutable, PeercoinTransaction):
 
     def __init__(self, version: int, timestamp: int, ins: list,
                  outs: list, locktime: Locktime) -> None:
@@ -571,6 +782,14 @@ class MutableTransaction(Mutable, Transaction):
                 raise ValueError('Expected objects of type `TxIn` or `MutableTxIn`, got {} instead'.format(type(txin)))
         self.ins = ins
         self.outs = list(self.outs)
+
+    @classmethod
+    def deserialize(cls, string, tx_parser, constants):
+        parser = tx_parser(string, constants)
+        result = parser.get_next_tx(True)
+        if parser:
+            raise ValueError('Leftover data after transaction')
+        return result
 
     def to_immutable(self):
         return Transaction(self.version, [txin.to_immutable() for txin in self.ins], self.outs, self.locktime)
@@ -619,17 +838,17 @@ class SegWitTransaction(Immutable, HexSerializable, Jsonizable):
     byte_flag = bytearray([flag])
 
     @staticmethod
-    def unhexlify(string):
-        tx = Transaction.unhexlify(string)
-        return SegWitTransaction(tx.version, tx.ins, tx.outs, tx.locktime)
+    def unhexlify(string, constants):
+        tx = BitcoinTransaction.unhexlify(string, BitcoinTxParser,constants)
+        return SegWitTransaction(tx.version, tx.ins, tx.outs, tx.locktime, constants)
 
     @staticmethod
-    def from_json(string):
-        tx = Transaction.from_json(string)
+    def from_json(string, constants):
+        tx = BitcoinTransaction.from_json(string, BitcoinTxParser, constants)
         return SegWitTransaction(tx.version, tx.ins, tx.outs, tx.locktime)
 
-    def __init__(self, version, ins, outs, locktime, txid=None):
-        object.__setattr__(self, 'transaction', Transaction(version, ins, outs, locktime, txid))
+    def __init__(self, version, ins, outs, locktime, constants, txid=None):
+        object.__setattr__(self, 'transaction', BitcoinTransaction(version, ins, outs, locktime, constants, txid))
 
     def __getattr__(self, item):
         return getattr(self.transaction, item)

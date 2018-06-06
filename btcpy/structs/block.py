@@ -27,12 +27,16 @@ class Block(Immutable, Jsonizable, HexSerializable):
         object.__setattr__(self, 'txns', txns)
 
     @staticmethod
-    def unhexlify(string):
-        return Block.deserialize(bytearray(unhexlify(string)))
+    def unhexlify(string, tx_parser, constants):
+        return Block.deserialize(
+            bytearray(unhexlify(string)),
+            tx_parser,
+            constants
+        )
 
     @staticmethod
-    def deserialize(string):
-        parser = BlockParser(string)
+    def deserialize(string, tx_parser, constants):
+        parser = BlockParser(string, tx_parser, constants)
         header = parser.get_block_header()
         txns = parser.get_txns()
         return Block(header, txns)

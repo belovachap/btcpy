@@ -9,6 +9,7 @@
 # propagated, or distributed except according to the terms contained in the
 # LICENSE.md file.
 
+from abc import ABC, abstractmethod
 from binascii import hexlify, unhexlify
 from hashlib import sha256
 import hashlib
@@ -134,6 +135,12 @@ class BlockHeaderParser(Parser):
 
 
 class BlockParser(BlockHeaderParser):
+
+    def __init__(self, bytes_, tx_parser, constants):
+        super().__init__(bytes_)
+        self.tx_parser = tx_parser
+        self.constants = constants
+
     def get_txn_count(self):
 
         return self.parse_varint()
@@ -142,7 +149,7 @@ class BlockParser(BlockHeaderParser):
 
         txn_count = self.get_txn_count()
         counter = 0
-        txns_parser = TransactionParser(self >> len(self))
+        txns_parser = self.tx_parser(self >> len(self), self.constants)
         txns = []
         for i in range(txn_count):
             txns.append(txns_parser.get_next_tx())
@@ -152,10 +159,11 @@ class BlockParser(BlockHeaderParser):
         return txns
 
 
-class TransactionParser(Parser):
+class TransactionParser(ABC, Parser):
 
-    def __init__(self, bytes_):
+    def __init__(self, bytes_, constants):
         super().__init__(bytes_)
+        self.constants = constants
         self.segwit = False
         self.txins = 0
 
@@ -196,12 +204,9 @@ class TransactionParser(Parser):
         self.txins = ntxins
         return self.segwit, [self._txin_data() for _ in range(ntxins)]
 
+    @abstractmethod
     def _txout(self, n):
-        from ..structs.script import ScriptBuilder
-        from ..structs.transaction import TxOut
-        value = int.from_bytes(self >> 8, 'little')
-        script = ScriptBuilder.identify(self >> self.parse_varint())
-        return TxOut(value, n, script)
+        ...
 
     def _txouts(self):
         return [self._txout(i) for i in range(self.parse_varint())]
@@ -220,9 +225,66 @@ class TransactionParser(Parser):
         from ..structs.transaction import Locktime
         return Locktime(int.from_bytes(self >> 4, 'little'))
 
+    @abstractmethod
+    def get_next_tx(self, mutable=False):
+        ...
+
+
+class BitcoinTxParser(TransactionParser):
+
+    def _txout(self, n):
+        from ..structs.script import ScriptBuilder
+        from ..structs.transaction import BitcoinTxOut
+
+        value = int.from_bytes(self >> 8, 'little')
+        script = ScriptBuilder.identify(self >> self.parse_varint())
+        return BitcoinTxOut(value, n, script, self.constants)
+
     def get_next_tx(self, mutable=False):
         from ..structs.script import CoinBaseScriptSig
-        from ..structs.transaction import (CoinBaseTxIn, Witness, TxIn, SegWitTransaction, Transaction)
+        from ..structs.transaction import (CoinBaseTxIn, Witness, TxIn, SegWitTransaction, BitcoinTransaction)
+
+        version = self._version()
+        segwit, txins_data = self._txins_data()
+        txouts = self._txouts()
+        if segwit:
+            witness = self._witness()
+            txins = [CoinBaseTxIn(*txin_data[2:], witness=Witness(wit))
+                     if isinstance(txin_data[2], CoinBaseScriptSig)
+                     else TxIn(*txin_data, witness=Witness(wit))
+                     for txin_data, wit in zip(txins_data, witness)]
+        else:
+            txins = [CoinBaseTxIn(*txin_data[2:])
+                     if isinstance(txin_data[2], CoinBaseScriptSig)
+                     else TxIn(*txin_data)
+                     for txin_data in txins_data]
+
+        locktime = self._locktime()
+
+        if len(txins) > 1 and isinstance(txins[0], CoinBaseTxIn):
+            raise ValueError('Transaction looks like coinbase but has more than one txin')
+
+        if segwit:
+            result = SegWitTransaction(version, txins, txouts, locktime, self.constants)
+        else:
+            result = BitcoinTransaction(version, txins, txouts, locktime, self.constants)
+
+        return result.to_mutable() if mutable else result
+
+
+class PeercoinTxParser(TransactionParser):
+
+    def _txout(self, n):
+        from ..structs.script import ScriptBuilder
+        from ..structs.transaction import PeercoinTxOut
+
+        value = int.from_bytes(self >> 8, 'little')
+        script = ScriptBuilder.identify(self >> self.parse_varint())
+        return PeercoinTxOut(value, n, script, self.constants)
+
+    def get_next_tx(self, mutable=False):
+        from ..structs.script import CoinBaseScriptSig
+        from ..structs.transaction import (CoinBaseTxIn, Witness, TxIn, SegWitTransaction, PeercoinTransaction)
 
         version = self._version()
         tstamp = self._timestamp()
@@ -248,7 +310,7 @@ class TransactionParser(Parser):
         if segwit:
             result = SegWitTransaction(version, txins, txouts, locktime)
         else:
-            result = Transaction(version, tstamp, txins, txouts, locktime)
+            result = PeercoinTransaction(version, tstamp, txins, txouts, locktime, self.constants)
 
         return result.to_mutable() if mutable else result
 
