@@ -386,9 +386,12 @@ class Transaction(ABC, Immutable, HexSerializable, Jsonizable):
         return cls.deserialize(bytearray(unhexlify(string)), tx_parser, constants)
 
     @classmethod
-    @abstractmethod
     def deserialize(cls, string, tx_parser, constants):
-        ...
+        parser = tx_parser(string, constants)
+        result = parser.get_next_tx(False)
+        if parser:
+            raise ValueError('Leftover data after transaction')
+        return result
 
     @classmethod
     @abstractmethod
@@ -552,14 +555,6 @@ class BitcoinTransaction(Transaction):
         #     raise ValueError('Invalid transaction size: {}'.format(len(self.serialize())))
 
     @classmethod
-    def deserialize(cls, string, tx_parser, constants):
-        parser = tx_parser(string, constants)
-        result = parser.get_next_tx(False)
-        if parser:
-            raise ValueError('Leftover data after transaction')
-        return result
-
-    @classmethod
     def from_json(cls, tx_json, constants):
         return cls(
             version=tx_json['version'],
@@ -633,14 +628,6 @@ class PeercoinTransaction(Transaction):
             raise ValueError('txid {} does not match transaction data {}'.format(txid, self.hexlify()))
 
     @classmethod
-    def deserialize(cls, string, tx_parser, constants):
-        parser = tx_parser(string, constants)
-        result = parser.get_next_tx(False)
-        if parser:
-            raise ValueError('Leftover data after transaction')
-        return result
-
-    @classmethod
     def from_json(cls, tx_json, constants):
         return cls(
             version=tx_json['version'],
@@ -702,7 +689,58 @@ class PeercoinTransaction(Transaction):
                                        self.timestamp))
 
 
-class BitcoinMutableTx(Mutable, BitcoinTransaction):
+class MutableTransaction(Mutable, Transaction):
+
+    @abstractmethod
+    def to_immutable(self):
+        ...
+
+    @abstractmethod
+    def to_segwit(self):
+        ...
+
+    @classmethod
+    def deserialize(cls, string, tx_parser, constants):
+        parser = tx_parser(string, constants)
+        result = parser.get_next_tx(True)
+        if parser:
+            raise ValueError('Leftover data after transaction')
+        return result
+
+    def spend_single(self, index, txout, solver):
+
+        sighashes = solver.get_sighashes()
+        prev_script = solver.get_prev_script() if solver.has_prev_script() else txout.script_pubkey
+
+        if len(sighashes) == 0:
+            script_sig, witness = solver.solve()
+        elif len(sighashes) == 1:
+            script_sig, witness = solver.solve(self.get_digest(index, prev_script, sighashes[0]))
+        else:
+            digests = []
+            for sighash in sighashes:
+                digests.append(self.get_digest(index, prev_script, sighash))
+            script_sig, witness = solver.solve(*digests)
+
+        if witness:
+            raise ValueError('Trying to spend segwit output with non-segwit transaction!')
+
+        self.ins[index].script_sig = script_sig
+
+    def spend(self, txouts, solvers):
+        if any(solver.solves_segwit() for solver in solvers):
+            return self.to_segwit().spend(txouts, solvers)
+        if len(solvers) != len(self.ins) or len(txouts) != len(solvers):
+            raise ValueError('{} solvers and {} txouts provided for {} inputs'.format(len(solvers),
+                                                                                      len(txouts),
+                                                                                      len(self.ins)))
+        for i, (txout, solver) in enumerate(zip(txouts, solvers)):
+            self.spend_single(i, txout, solver)
+
+        return self.to_immutable()
+
+
+class BitcoinMutableTx(MutableTransaction, BitcoinTransaction):
 
     def __init__(self, version: int, ins: list,
                  outs: list, locktime: Locktime, constants) -> None:
@@ -719,54 +757,20 @@ class BitcoinMutableTx(Mutable, BitcoinTransaction):
         self.ins = ins
         self.outs = list(self.outs)
 
-    @classmethod
-    def deserialize(cls, string, tx_parser, constants):
-        parser = tx_parser(string, constants)
-        result = parser.get_next_tx(True)
-        if parser:
-            raise ValueError('Leftover data after transaction')
-        return result
-
     def to_immutable(self):
-        return Transaction(self.version, [txin.to_immutable() for txin in self.ins], self.outs, self.locktime)
+        return BitcoinTransaction(
+            self.version,
+            [txin.to_immutable() for txin in self.ins],
+            self.outs,
+            self.locktime,
+            self.constants,
+        )
 
     def to_segwit(self):
         return MutableSegWitTransaction(self.version, self.ins, self.outs, self.locktime)
 
-    def spend_single(self, index, txout, solver):
 
-        sighashes = solver.get_sighashes()
-        prev_script = solver.get_prev_script() if solver.has_prev_script() else txout.script_pubkey
-
-        if len(sighashes) == 0:
-            script_sig, witness = solver.solve()
-        elif len(sighashes) == 1:
-            script_sig, witness = solver.solve(self.get_digest(index, prev_script, sighashes[0]))
-        else:
-            digests = []
-            for sighash in sighashes:
-                digests.append(self.get_digest(index, prev_script, sighash))
-            script_sig, witness = solver.solve(*digests)
-
-        if witness:
-            raise ValueError('Trying to spend segwit output with non-segwit transaction!')
-
-        self.ins[index].script_sig = script_sig
-
-    def spend(self, txouts, solvers):
-        if any(solver.solves_segwit() for solver in solvers):
-            return self.to_segwit().spend(txouts, solvers)
-        if len(solvers) != len(self.ins) or len(txouts) != len(solvers):
-            raise ValueError('{} solvers and {} txouts provided for {} inputs'.format(len(solvers),
-                                                                                      len(txouts),
-                                                                                      len(self.ins)))
-        for i, (txout, solver) in enumerate(zip(txouts, solvers)):
-            self.spend_single(i, txout, solver)
-
-        return self.to_immutable()
-
-
-class PeercoinMutableTx(Mutable, PeercoinTransaction):
+class PeercoinMutableTx(MutableTransaction, PeercoinTransaction):
 
     def __init__(self, version: int, timestamp: int, ins: list,
                  outs: list, locktime: Locktime) -> None:
@@ -783,51 +787,18 @@ class PeercoinMutableTx(Mutable, PeercoinTransaction):
         self.ins = ins
         self.outs = list(self.outs)
 
-    @classmethod
-    def deserialize(cls, string, tx_parser, constants):
-        parser = tx_parser(string, constants)
-        result = parser.get_next_tx(True)
-        if parser:
-            raise ValueError('Leftover data after transaction')
-        return result
-
     def to_immutable(self):
-        return Transaction(self.version, [txin.to_immutable() for txin in self.ins], self.outs, self.locktime)
+        return PeercoinTransaction(
+            self.version,
+            self.timestamp,
+            [txin.to_immutable() for txin in self.ins],
+            self.outs,
+            self.locktime,
+            self.constants,
+        )
 
     def to_segwit(self):
-        return MutableSegWitTransaction(self.version, self.ins, self.outs, self.locktime)
-
-    def spend_single(self, index, txout, solver):
-
-        sighashes = solver.get_sighashes()
-        prev_script = solver.get_prev_script() if solver.has_prev_script() else txout.script_pubkey
-
-        if len(sighashes) == 0:
-            script_sig, witness = solver.solve()
-        elif len(sighashes) == 1:
-            script_sig, witness = solver.solve(self.get_digest(index, prev_script, sighashes[0]))
-        else:
-            digests = []
-            for sighash in sighashes:
-                digests.append(self.get_digest(index, prev_script, sighash))
-            script_sig, witness = solver.solve(*digests)
-
-        if witness:
-            raise ValueError('Trying to spend segwit output with non-segwit transaction!')
-
-        self.ins[index].script_sig = script_sig
-
-    def spend(self, txouts, solvers):
-        if any(solver.solves_segwit() for solver in solvers):
-            return self.to_segwit().spend(txouts, solvers)
-        if len(solvers) != len(self.ins) or len(txouts) != len(solvers):
-            raise ValueError('{} solvers and {} txouts provided for {} inputs'.format(len(solvers),
-                                                                                      len(txouts),
-                                                                                      len(self.ins)))
-        for i, (txout, solver) in enumerate(zip(txouts, solvers)):
-            self.spend_single(i, txout, solver)
-
-        return self.to_immutable()
+        raise NotImplementedError("Peercoin doesn't have SegWit.")
 
 
 class SegWitTransaction(Immutable, HexSerializable, Jsonizable):
@@ -1025,10 +996,13 @@ class MutableSegWitTransaction(Mutable, SegWitTransaction):
         self.transaction = self.transaction.to_mutable()
 
     def to_immutable(self):
-        return SegWitTransaction(self.version,
-                                 [txin.to_immutable() for txin in self.ins],
-                                 self.outs,
-                                 self.locktime)
+        return SegWitTransaction(
+            self.version,
+            [txin.to_immutable() for txin in self.ins],
+            self.outs,
+            self.locktime,
+            self.constants,
+        )
 
     def spend_single(self, index, txout, solver):
 

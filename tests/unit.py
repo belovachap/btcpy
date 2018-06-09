@@ -324,6 +324,17 @@ class TestReplace(unittest.TestCase):
                 self.assertTrue(tx.is_replaceable())
 
 
+class TestBitcoinMutableTx(unittest.TestCase):
+
+    def test_to_immutable(self):
+        "Check that we can convert to a mutable transaction object."
+        for transaction in transactions:
+            tx = BitcoinMutableTx.unhexlify(transaction['raw'], BitcoinTxParser, BitcoinMainnet)
+            self.assertTrue(
+                type(tx.to_immutable()) in (BitcoinTransaction, SegWitTransaction,)
+            )
+
+
 class TestStackData(unittest.TestCase):
 
     @staticmethod
