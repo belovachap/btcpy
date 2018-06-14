@@ -15,7 +15,6 @@ from .base58 import b58encode_check, b58decode_check
 from .bech32 import decode, encode
 from ..constants import Constants
 from ..structs.address import Address, P2pkhAddress, P2shAddress, P2wpkhAddress, P2wshAddress
-from btcpy.setup import get_state
 
 
 class CouldNotDecode(ValueError):
@@ -46,17 +45,17 @@ class Base58Codec(Codec):
     @staticmethod
     def encode(address):
         try:
-            prefix = get_state()['network'].base58_raw_prefixes[address.get_type()]
+            prefix = address.network.base58_raw_prefixes[address.get_type()]
         except KeyError:
             raise CouldNotEncode('Impossible to encode address type: {}, network: {}'.format(address.get_type(),
                                                                                              address.network))
         return b58encode_check(bytes(prefix + address.hash))
 
     @staticmethod
-    def decode(string):
+    def decode(network, string):
 
         try:
-            addr_type = get_state()['network'].base58_prefixes[string[0]]
+            addr_type = network.base58_prefixes[string[0]]
         except KeyError:
             raise CouldNotDecode('Impossible to decode address {}'.format(string))
         hashed_data = bytearray(b58decode_check(string))[1:]
@@ -71,7 +70,7 @@ class Base58Codec(Codec):
         else:
             raise ValueError('Unknown address type: {}'.format(addr_type))
 
-        return cls(hashed_data)
+        return cls(network, hashed_data)
 
 
 class Bech32Codec(Codec):
@@ -81,11 +80,10 @@ class Bech32Codec(Codec):
 
     @staticmethod
     def encode(address):
-        prefix = Constants.get('bech32.net_to_hrp')[address.network]
-        return encode(prefix, address.version, address.hash)
+        return encode(address.network.hrp, address.version, address.hash)
 
     @staticmethod
-    def decode(string):
+    def decode(network, string):
 
         if not string:
             raise CouldNotDecode('Impossible to decode empty string')
@@ -97,7 +95,7 @@ class Bech32Codec(Codec):
 
         string = string.lower()
     
-        if string[:2] != get_state()['network'].bech32_hrp:
+        if string[:2] != network.bech32_hrp:
             raise CouldNotDecode('Impossible to decode address {}'.format(string))
 
         try:
@@ -116,4 +114,4 @@ class Bech32Codec(Codec):
         else:
             raise ValueError('Unknown address type: {}'.format(addr_type))
 
-        return cls(bytearray(hashed_data), version)
+        return cls(network, bytearray(hashed_data), version)

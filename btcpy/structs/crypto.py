@@ -18,7 +18,6 @@ from abc import ABCMeta
 
 from btcpy.lib.base58 import b58decode_check, b58encode_check
 from btcpy.lib.types import HexSerializable
-from btcpy.setup import get_state
 from btcpy.structs.address import P2pkhAddress, P2wpkhAddress
 
 
@@ -35,7 +34,7 @@ class PrivateKey(Key):
     highest_s = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0
 
     @staticmethod
-    def from_wif(wif):
+    def from_wif(network, wif):
 
         if not 51 <= len(wif) <= 52:
             raise ValueError('Invalid wif length: {}'.format(len(wif)))
@@ -43,7 +42,7 @@ class PrivateKey(Key):
         decoded = b58decode_check(wif)
         prefix, *rest = decoded
 
-        if prefix != get_state()['network'].wif_prefix:
+        if prefix != network.wif_prefix:
             raise ValueError('Unknown private key prefix: {:02x}'.format(prefix))
 
         public_compressed = len(rest) == 33
@@ -59,9 +58,8 @@ class PrivateKey(Key):
         self.key = priv
         self.public_compressed = public_compressed
 
-    def to_wif(self):
-        prefix = get_state()['network'].wif_prefix
-        decoded = bytearray([prefix]) + self.key
+    def to_wif(self, network):
+        decoded = bytearray([network.wif_prefix]) + self.key
         if self.public_compressed:
             decoded.append(0x01)
         return b58encode_check(bytes(decoded))
@@ -202,8 +200,8 @@ class PublicKey(BasePublicKey):
     def serialize(self):
         return self.uncompressed if self.type == 'uncompressed' else self.compressed
 
-    def to_address(self):
-        return P2pkhAddress(self.hash())
+    def to_address(self, network):
+        return P2pkhAddress(network, self.hash())
 
     def to_segwit_address(self, version):
         if self.type == 'uncompressed':

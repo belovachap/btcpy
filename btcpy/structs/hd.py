@@ -21,7 +21,6 @@ from abc import ABCMeta, abstractmethod
 from ..lib.types import HexSerializable
 from ..lib.parsing import Stream, Parser
 from .crypto import PrivateKey, PublicKey
-from btcpy.setup import get_state
 
 
 class ExtendedKey(HexSerializable, metaclass=ABCMeta):
@@ -35,9 +34,9 @@ class ExtendedKey(HexSerializable, metaclass=ABCMeta):
         return cls(key, chaincode, 0, cls.master_parent_fingerprint, 0, hardened=True)
 
     @classmethod
-    def decode(cls, string):
+    def decode(cls, network, string):
 
-        if string[0] != get_state()['network'].xkeys_prefix:
+        if string[0] != network.xkeys_prefix:
             raise ValueError('Encoded key not recognised: {}'.format(string))
 
         decoded = b58decode_check(string)
@@ -142,13 +141,13 @@ class ExtendedKey(HexSerializable, metaclass=ABCMeta):
                     self.parent_fingerprint == ExtendedKey.master_parent_fingerprint,
                     self.index == 0])
 
-    def encode(self):
-        return b58encode_check(bytes(self.serialize()))
+    def encode(self, network):
+        return b58encode_check(bytes(self.serialize(network)))
 
-    def serialize(self):
+    def serialize(self, network):
         cls = self.__class__
         result = Stream()
-        result << cls.get_version()
+        result << cls.get_version(network)
         result << self.depth.to_bytes(1, 'big')
         result << self.parent_fingerprint
         if self.hardened:
@@ -181,8 +180,8 @@ class ExtendedKey(HexSerializable, metaclass=ABCMeta):
 class ExtendedPrivateKey(ExtendedKey):
 
     @staticmethod
-    def get_version():
-        return get_state()['network'].xprv_version
+    def get_version(network):
+        return network.xprv_version
 
     @staticmethod
     def decode_key(keydata):
@@ -229,8 +228,8 @@ class ExtendedPrivateKey(ExtendedKey):
 class ExtendedPublicKey(ExtendedKey):
 
     @staticmethod
-    def get_version():
-        return get_state()['network'].xpub_version
+    def get_version(network):
+        return network.xpub_version
 
     @staticmethod
     def decode_key(keydata):

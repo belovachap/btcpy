@@ -20,19 +20,19 @@
     "if_else_timelock": {
         "hex": "6352210384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff2103eb27fa93667e4f48e36071eb21c7229e5416ff0abd2886d59c8f314fb3cbee4052ae67037b9710b175210384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ffac68",
         "asm": "OP_IF OP_2 0384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff 03eb27fa93667e4f48e36071eb21c7229e5416ff0abd2886d59c8f314fb3cbee40 OP_2 OP_CHECKMULTISIG OP_ELSE 7b9710 OP_CHECKLOCKTIMEVERIFY OP_DROP 0384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff OP_CHECKSIG OP_ENDIF",
-        "code": "IfElseScript(MultisigScript(2, PublicKey.unhexlify(\"0384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff\"), PublicKey.unhexlify(\"03eb27fa93667e4f48e36071eb21c7229e5416ff0abd2886d59c8f314fb3cbee40\"), 2), TimelockScript(Locktime(1087355), P2pkScript(PublicKey.unhexlify(\"0384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff\"))))",
+        "code": "IfElseScript(MultisigScript(2, PublicKey.unhexlify(\"0384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff\"), PublicKey.unhexlify(\"03eb27fa93667e4f48e36071eb21c7229e5416ff0abd2886d59c8f314fb3cbee40\"), 2), TimelockScript(Locktime(1087355), P2pkScript(PublicKey.unhexlify(\"0384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff\"))), strict=True)",
         "type": "if{ multisig }else{ [timelock] p2pk }"
     },
     "relativetimelock": {
         "hex": "635221021b98b2e4ba9dae9f869bcf948c45df6b6f8e6bb623915cf144237f5e6ab98cf4210376d53363bbeefed905fc685e4d4e1fe0cbf9959e8f59e9f5f209f489b3a6285752ae6755b275210301bf316386b5b09abe8f71cc68bf7ab62bc9f511b7c13fe0febd75e3ac5ce855ac68",
         "asm": "OP_IF OP_2 021b98b2e4ba9dae9f869bcf948c45df6b6f8e6bb623915cf144237f5e6ab98cf4 0376d53363bbeefed905fc685e4d4e1fe0cbf9959e8f59e9f5f209f489b3a62857 OP_2 OP_CHECKMULTISIG OP_ELSE OP_5 OP_CHECKSEQUENCEVERIFY OP_DROP 0301bf316386b5b09abe8f71cc68bf7ab62bc9f511b7c13fe0febd75e3ac5ce855 OP_CHECKSIG OP_ENDIF",
-        "code": "IfElseScript(MultisigScript(2, PublicKey.unhexlify(\"021b98b2e4ba9dae9f869bcf948c45df6b6f8e6bb623915cf144237f5e6ab98cf4\"), PublicKey.unhexlify(\"0376d53363bbeefed905fc685e4d4e1fe0cbf9959e8f59e9f5f209f489b3a62857\"), 2),RelativeTimelockScript(Sequence(5), P2pkScript(PublicKey.unhexlify(\"0301bf316386b5b09abe8f71cc68bf7ab62bc9f511b7c13fe0febd75e3ac5ce855\"))))",
+        "code": "IfElseScript(MultisigScript(2, PublicKey.unhexlify(\"021b98b2e4ba9dae9f869bcf948c45df6b6f8e6bb623915cf144237f5e6ab98cf4\"), PublicKey.unhexlify(\"0376d53363bbeefed905fc685e4d4e1fe0cbf9959e8f59e9f5f209f489b3a62857\"), 2),RelativeTimelockScript(Sequence(5), P2pkScript(PublicKey.unhexlify(\"0301bf316386b5b09abe8f71cc68bf7ab62bc9f511b7c13fe0febd75e3ac5ce855\")), strict=True), strict=True)",
         "type": "if{ multisig }else{ [relativetimelock] p2pk }"
     },
     "multisig": {
         "hex": "522102c08786d63f78bd0a6777ffe9c978cf5899756cfc32bfad09a89e211aeb92624221033e81519ecf373ea3a5c7e1c051b71a898fb3438c9550e274d980f147eb4d069d21036d568125a969dc78b963b494fa7ed5f20ee9c2f2fc2c57f86c5df63089f2ed3a53ae",
         "asm": "OP_2 02c08786d63f78bd0a6777ffe9c978cf5899756cfc32bfad09a89e211aeb926242 033e81519ecf373ea3a5c7e1c051b71a898fb3438c9550e274d980f147eb4d069d 036d568125a969dc78b963b494fa7ed5f20ee9c2f2fc2c57f86c5df63089f2ed3a OP_3 OP_CHECKMULTISIG",
-        "code": "MultisigScript(2, PublicKey.unhexlify(\"02c08786d63f78bd0a6777ffe9c978cf5899756cfc32bfad09a89e211aeb926242\"), PublicKey.unhexlify(\"033e81519ecf373ea3a5c7e1c051b71a898fb3438c9550e274d980f147eb4d069d\"), PublicKey.unhexlify(\"036d568125a969dc78b963b494fa7ed5f20ee9c2f2fc2c57f86c5df63089f2ed3a\"), 3)",
+        "code": "MultisigScript(2, PublicKey.unhexlify(\"02c08786d63f78bd0a6777ffe9c978cf5899756cfc32bfad09a89e211aeb926242\"), PublicKey.unhexlify(\"033e81519ecf373ea3a5c7e1c051b71a898fb3438c9550e274d980f147eb4d069d\"), PublicKey.unhexlify(\"036d568125a969dc78b963b494fa7ed5f20ee9c2f2fc2c57f86c5df63089f2ed3a\"), 3, strict=True)",
         "type": "multisig"
     },
     "nulldata": {

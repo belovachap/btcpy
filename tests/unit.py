@@ -20,13 +20,14 @@ from btcpy.structs.block import *
 from btcpy.structs.crypto import PublicKey, PrivateKey
 from btcpy.structs.address import Address, SegWitAddress, P2shAddress, P2wshAddress
 from btcpy.lib.codecs import CouldNotDecode
-from btcpy.setup import setup
 from btcpy.structs.hd import *
-from btcpy.lib.base58 import b58decode, b58encode
-from btcpy.lib.base58 import b58decode_check, b58encode_check
+from btcpy.lib.base58 import (
+    b58decode,
+    b58decode_check,
+    b58encode,
+    b58encode_check,
+)
 from btcpy.lib.parsing import IncompleteParsingException
-
-setup()
 
 
 def get_data(filename):
@@ -60,17 +61,6 @@ wif = get_data('wif')
 p2wpkh_over_p2sh = get_data("p2wpkh_over_p2sh")
 p2wsh_over_p2sh = get_data("p2wsh_over_p2sh")
 serialization_data = get_data('stack_data/serialization')
-
-
-class RestoreStateTestCase(unittest.TestCase):
-    """TestCase super class that provides setUp and tearDown methods to capture
-    and restore the global state of the system.
-    """
-    def setUp(self):
-        self.prev_state = get_state()
-
-    def tearDown(self):
-        setup(self.prev_state['network'], self.prev_state['strict'], True)
 
 
 class TestB58(unittest.TestCase):
@@ -111,20 +101,20 @@ class TestUnknownScript(unittest.TestCase):
             self.assertEqual(str(result), script['asm'])
 
 
-class TestPrivPubHashAddrP2pkhSegwit(RestoreStateTestCase):
+class TestPrivPubHashAddrP2pkhSegwit(unittest.TestCase):
 
     def test(self):
         for data in priv_pub_hash_addr_p2pkh_segwit:
             try:
-                setup(BitcoinMainnet, True, True)
-                priv = PrivateKey.from_wif(data['privkey'])
+                net = BitcoinMainnet
+                priv = PrivateKey.from_wif(net, data['privkey'])
             except ValueError:
-                setup(BitcoinTestnet, True, True)
-                priv = PrivateKey.from_wif(data['privkey'])
+                net = BitcoinTestnet
+                priv = PrivateKey.from_wif(net, data['privkey'])
 
             pub = PublicKey.unhexlify(data['pubkey'])
             pubhash = bytearray(unhexlify(data['pubkeyhash']))
-            address = Address.from_string(data['address'])
+            address = Address.from_string(net, data['address'])
             p2pkhhex = data['scriptpubkey']
             segwit_addr = data['segwit']
 
@@ -134,10 +124,10 @@ class TestPrivPubHashAddrP2pkhSegwit(RestoreStateTestCase):
             self.assertEqual(P2pkhScript(pub).hexlify(), p2pkhhex)
             self.assertEqual(P2pkhScript(address).hexlify(), p2pkhhex)
             self.assertEqual(P2pkhScript(pubhash).hexlify(), p2pkhhex)
-            self.assertEqual(str(P2shScript(P2wpkhV0Script(pub)).address()), segwit_addr)
-            self.assertEqual(str(P2shScript(P2wpkhV0Script(pubhash)).address()), segwit_addr)
-            self.assertEqual(P2shScript(P2wpkhV0Script(pub)).scripthash, Address.from_string(segwit_addr).hash)
-            self.assertEqual(P2shScript(P2wpkhV0Script(pubhash)).scripthash, Address.from_string(segwit_addr).hash)
+            self.assertEqual(str(P2shScript(P2wpkhV0Script(pub)).address(net)), segwit_addr)
+            self.assertEqual(str(P2shScript(P2wpkhV0Script(pubhash)).address(net)), segwit_addr)
+            self.assertEqual(P2shScript(P2wpkhV0Script(pub)).scripthash, Address.from_string(net, segwit_addr).hash)
+            self.assertEqual(P2shScript(P2wpkhV0Script(pubhash)).scripthash, Address.from_string(net, segwit_addr).hash)
 
 
 class TestNormalizedId(unittest.TestCase):
@@ -155,20 +145,20 @@ class TestHD(unittest.TestCase):
     def test_hd(self):
         masterpriv = None
         for data in hd_keys:
-            priv = ExtendedKey.decode(data['prv'])
-            pub = ExtendedKey.decode(data['pub'])
+            priv = ExtendedKey.decode(BitcoinMainnet, data['prv'])
+            pub = ExtendedKey.decode(BitcoinMainnet, data['pub'])
             if data['path'] == 'm':
                 masterpriv = priv
-            self.assertEqual(priv.pub().encode(), pub.encode())
-            self.assertEqual(priv.encode(), data['prv'])
-            self.assertEqual(pub.encode(), data['pub'])
+            self.assertEqual(priv.pub().encode(BitcoinMainnet), pub.encode(BitcoinMainnet))
+            self.assertEqual(priv.encode(BitcoinMainnet), data['prv'])
+            self.assertEqual(pub.encode(BitcoinMainnet), data['pub'])
             derived = masterpriv.derive(data['path'])
-            self.assertEqual(derived.encode(), data['prv'])
-            self.assertEqual(derived.pub().encode(), data['pub'])
+            self.assertEqual(derived.encode(BitcoinMainnet), data['prv'])
+            self.assertEqual(derived.pub().encode(BitcoinMainnet), data['pub'])
 
     def test_priv_pub(self):
-        masterpub = ExtendedPublicKey.decode(hd_keys[0]['pub'])
-        masterpriv = ExtendedPublicKey.decode(hd_keys[0]['prv'])
+        masterpub = ExtendedPublicKey.decode(BitcoinMainnet, hd_keys[0]['pub'])
+        masterpriv = ExtendedPublicKey.decode(BitcoinMainnet, hd_keys[0]['prv'])
         pubs = [masterpub]
         privs = [masterpriv]
         paths = ['m/0/1/2147483646/2',
@@ -269,19 +259,19 @@ class TestTransaction(unittest.TestCase):
             self.assertEqual(parsed_script.type, value['type'])
 
 
-class TestSegWitAddress(RestoreStateTestCase):
+class TestSegWitAddress(unittest.TestCase):
 
     def test_valid(self):
         for data in segwit_valid_addresses:
             try:
-                setup(BitcoinMainnet, True, True)
-                address = SegWitAddress.from_string(data['address'])
+                net = BitcoinMainnet
+                address = SegWitAddress.from_string(net, data['address'])
             except CouldNotDecode:
-                setup(BitcoinTestnet, True, True)
-                address = SegWitAddress.from_string(data['address'])
+                net = BitcoinTestnet
+                address = SegWitAddress.from_string(net, data['address'])
 
             script = ScriptBuilder.identify(data['script'])
-            self.assertEqual(address.hash, script.address().hash)
+            self.assertEqual(address.hash, script.address(net).hash)
             if len(data['script']) == 44:
                 self.assertEqual(P2wpkhV0Script(address), script)
             elif len(data['script']) == 68:
@@ -290,7 +280,7 @@ class TestSegWitAddress(RestoreStateTestCase):
     def test_invalid(self):
         for address in segwit_invalid_addresses:
             with self.assertRaises(CouldNotDecode):
-                print(SegWitAddress.from_string(address))
+                print(SegWitAddress.from_string(BitcoinMainnet, address))
 
 
 class TestSegwitOverP2sh(unittest.TestCase):
@@ -298,7 +288,7 @@ class TestSegwitOverP2sh(unittest.TestCase):
     def test_p2wpkh_over_p2sh(self):
         for spend in p2wpkh_over_p2sh:
             pubkey = PublicKey.unhexlify(spend['pubkey'])
-            self.assertEqual(str(P2shAddress.from_script(P2wpkhScript.get(spend['witness_version'])(pubkey),)), spend['address'])
+            self.assertEqual(str(P2shAddress.from_script(BitcoinMainnet, P2wpkhScript.get(spend['witness_version'])(pubkey),)), spend['address'])
             self.assertEqual(P2wpkhScript.get(spend['witness_version'])(pubkey).hexlify(), spend['redeem_script'])
             self.assertEqual(str(P2shScript(P2wpkhScript.get(spend['witness_version'])(pubkey))), spend['script_pubkey'])
 
@@ -307,7 +297,7 @@ class TestSegwitOverP2sh(unittest.TestCase):
             wit_script = ScriptBuilder.identify(spend['witness_script'])
             self.assertEqual(str(P2shScript(P2wshScript.get(spend['witness_version'])(wit_script))), spend['script_pubkey'])
             self.assertEqual(P2wshScript.get(spend['witness_version'])(wit_script).hexlify(), spend['redeem_script'])
-            self.assertEqual(str(P2shAddress.from_script(P2wshScript.get(spend['witness_version'])(wit_script))), spend['address'])
+            self.assertEqual(str(P2shAddress.from_script(BitcoinMainnet, P2wshScript.get(spend['witness_version'])(wit_script))), spend['address'])
 
 
 class TestReplace(unittest.TestCase):
@@ -385,37 +375,32 @@ class TestStackData(unittest.TestCase):
             self.assertTrue(int(StackData.from_int(x)) == x)
 
 
-class TestKeys(RestoreStateTestCase):
-
-    def setUp(self):
-        super().setUp()
-        setup(BitcoinTestnet, True, True)
+class TestKeys(unittest.TestCase):
 
     def test_priv_to_pubhash(self):
-        for priv, addr, _ in privk['derivations']:
-            
-            self.assertEqual(str(PrivateKey.from_wif(priv).pub().to_address()), addr)
-            self.assertEqual(PrivateKey.from_wif(priv).pub().hash(),
-                             Address.from_string(addr).hash)
+        for priv, addr, _ in privk['derivations']:     
+            self.assertEqual(str(PrivateKey.from_wif(BitcoinTestnet, priv).pub().to_address(BitcoinTestnet)), addr)
+            self.assertEqual(PrivateKey.from_wif(BitcoinTestnet, priv).pub().hash(),
+                             Address.from_string(BitcoinTestnet, addr).hash)
 
     def test_derivation(self):
-        m = ExtendedPrivateKey.decode(privk['master'])
+        m = ExtendedPrivateKey.decode(BitcoinTestnet, privk['master'])
         for priv, _, path in privk['derivations']:
-            self.assertEqual(m.derive(path).key, PrivateKey.from_wif(priv))
+            self.assertEqual(m.derive(path).key, PrivateKey.from_wif(BitcoinTestnet, priv))
 
     def test_to_wif(self):
         for w in wif:
             try:
-                setup(BitcoinMainnet, True, True)        
-                self.assertEqual(PrivateKey.from_wif(w['wif']).hexlify(), w['hex'])
+                net = BitcoinMainnet
+                self.assertEqual(PrivateKey.from_wif(net, w['wif']).hexlify(), w['hex'])
             except:
-                setup(BitcoinTestnet, True, True)        
-                self.assertEqual(PrivateKey.from_wif(w['wif']).hexlify(), w['hex'])
+                net = BitcoinTestnet
+                self.assertEqual(PrivateKey.from_wif(net, w['wif']).hexlify(), w['hex'])
 
             priv = PrivateKey.unhexlify(w['hex'])
             if not w['compressed']:
                 priv.public_compressed = False
-            self.assertEqual(priv.to_wif(), w['wif'])
+            self.assertEqual(priv.to_wif(net), w['wif'])
 
 
 class TestPubkey(unittest.TestCase):
@@ -437,13 +422,12 @@ class TestPubkey(unittest.TestCase):
 
     def test_address_generation(self):
         pubk = PublicKey.unhexlify(self.uncompressed)
-        self.assertTrue(str(pubk.to_address()) == self.address)
+        self.assertTrue(str(pubk.to_address(BitcoinMainnet)) == self.address)
 
 
-class TestPrivKey(RestoreStateTestCase):
+class TestPrivKey(unittest.TestCase):
 
     def setUp(self):
-        super().setUp()
         from ecdsa import SigningKey, SECP256k1
 
         self.mainnet_privs = []
@@ -453,30 +437,24 @@ class TestPrivKey(RestoreStateTestCase):
 
         for k in keys:
             try:
-                setup(BitcoinMainnet, True, True)
-                self.mainnet_privs.append(ExtendedPrivateKey.decode(k[1]).key)
+                self.mainnet_privs.append(ExtendedPrivateKey.decode(BitcoinMainnet, k[1]).key)
             except ValueError:
-                setup(BitcoinTestnet, True, True)
-                self.testnet_privs.append(ExtendedPrivateKey.decode(k[1]).key)
+                self.testnet_privs.append(ExtendedPrivateKey.decode(BitcoinTestnet, k[1]).key)
 
-        setup(BitcoinMainnet, True, True)
         self.mainnet_vers = [SigningKey.from_string(p.key, curve=SECP256k1).get_verifying_key() for p in self.mainnet_privs]
 
-        setup(BitcoinTestnet, True, True)
         self.testnet_vers = [SigningKey.from_string(p.key, curve=SECP256k1).get_verifying_key() for p in self.testnet_privs]
 
     def test_raw_sig_success(self):
         from os import urandom
         for _ in range(10):
 
-            setup(BitcoinMainnet, True, True)
             for ver, priv in zip(self.mainnet_vers, self.mainnet_privs):
                 digest = bytearray(urandom(32))
                 r, s, order = priv.raw_sign(digest)
                 self.assertTrue(s in range(1, PrivateKey.highest_s))
                 self.assertTrue(ver.verify_digest((r, s), digest, sigdecode=lambda sig, _: (sig[0], sig[1])))
 
-            setup(BitcoinTestnet, True, True)
             for ver, priv in zip(self.testnet_vers, self.testnet_privs):
                 digest = bytearray(urandom(32))
                 r, s, order = priv.raw_sign(digest)
@@ -489,7 +467,6 @@ class TestPrivKey(RestoreStateTestCase):
 
         for _ in range(10):
 
-            setup(BitcoinMainnet, True, True)
             for priv in self.mainnet_privs:
                 digest = bytearray(urandom(32))
                 sig = priv.sign(digest)
@@ -498,7 +475,6 @@ class TestPrivKey(RestoreStateTestCase):
                 s = int.from_bytes(bytearray(struct.unpack(str(length_s) + 'B', sig[6 + length_r:6 + length_r + length_s])), 'big')
                 self.assertTrue(s in range(1, PrivateKey.highest_s))
 
-            setup(BitcoinTestnet, True, True)
             for priv in self.testnet_privs:
                 digest = bytearray(urandom(32))
                 sig = priv.sign(digest)
@@ -511,13 +487,13 @@ class TestPrivKey(RestoreStateTestCase):
     def test_derivation_success(self):
         for pub, priv in keys:
             try:
-                setup(BitcoinMainnet, True, True)
-                pu = ExtendedPublicKey.decode(pub).key
+                net = BitcoinMainnet
+                pu = ExtendedPublicKey.decode(net, pub).key
             except ValueError:
-                setup(BitcoinTestnet, True, True)
-                pu = ExtendedPublicKey.decode(pub).key
+                net = BitcoinTestnet
+                pu = ExtendedPublicKey.decode(net, pub).key
 
-            pr = ExtendedPrivateKey.decode(priv).key
+            pr = ExtendedPrivateKey.decode(net, priv).key
             self.assertTrue(pr.pub() == pu)
             self.assertTrue(pr.pub().hexlify() == pu.hexlify())
 
@@ -550,14 +526,12 @@ class TestP2pk(unittest.TestCase):
             P2pkScript.unhexlify('21{}ad'.format(self.pubk))
 
 
-class TestP2pkh(RestoreStateTestCase):
+class TestP2pkh(unittest.TestCase):
 
     def setUp(self):
-        super().setUp()
-        setup(BitcoinTestnet, True, True)
         self.pubk = PublicKey.unhexlify('0384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff')
         self.pubkh = self.pubk.hash()
-        self.address = Address.from_string('mquvJWnJJwTDUcdneQkUbrfN2wm9uiXd1p')
+        self.address = Address.from_string(BitcoinTestnet, 'mquvJWnJJwTDUcdneQkUbrfN2wm9uiXd1p')
 
     def test_success_pubk(self):
         script = P2pkhScript(self.pubk)
@@ -596,8 +570,7 @@ class TestP2pkh(RestoreStateTestCase):
 
 class TestPwpkhScript(unittest.TestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def setUp(self):
         self.pubk = PublicKey.unhexlify('0384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff')
         self.pubkh = self.pubk.hash()
 
@@ -630,15 +603,13 @@ class TestPwpkhScript(unittest.TestCase):
             P2wpkhV0Script.unhexlify('0114{}'.format(hexlify(self.pubkh).decode()))
 
 
-class TestP2sh(RestoreStateTestCase):
+class TestP2sh(unittest.TestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
+    def setUp(self):
         self.redeem_script = P2pkhScript(PublicKey.unhexlify('0384478d41e71dc6c3f9edde0f928a47d1b724c'
                                                              '05984ebfb4e7d0422e80abe95ff'))
         self.as_data = StackData.from_bytes(self.redeem_script.p2sh_hash())
-        self.address = P2shAddress.from_script(self.redeem_script)
+        self.address = P2shAddress.from_script(BitcoinMainnet, self.redeem_script)
 
     def test_success_hash(self):
         script = P2shScript(self.redeem_script.p2sh_hash())
@@ -657,16 +628,16 @@ class TestP2sh(RestoreStateTestCase):
         for script_hex, address in p2sh.items():
             script = ScriptBuilder.identify(bytearray(unhexlify(script_hex)))
             try:
-                setup(BitcoinMainnet, True, True)
-                from_addr = P2shScript(Address.from_string(address))
+                net = BitcoinMainnet
+                from_addr = P2shScript(Address.from_string(net, address))
             except CouldNotDecode:
-                setup(BitcoinTestnet, True, True)
-                from_addr = P2shScript(Address.from_string(address))
+                net = BitcoinTestnet
+                from_addr = P2shScript(Address.from_string(net, address))
 
             from_script = P2shScript(script)
-            self.assertTrue(str(from_addr.address()) == address)
-            self.assertTrue(str(P2shAddress.from_script(script)) == address)
-            self.assertTrue(str(from_script.address()) == address)
+            self.assertTrue(str(from_addr.address(net)) == address)
+            self.assertTrue(str(P2shAddress.from_script(net, script)) == address)
+            self.assertTrue(str(from_script.address(net)) == address)
 
         script = P2shScript(self.address)
         self.assertTrue(script.decompile() ==
@@ -692,8 +663,7 @@ class TestP2sh(RestoreStateTestCase):
 
 class TestP2wsh(unittest.TestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def setUp(self):
         self.redeem_script = P2pkhScript(PublicKey.unhexlify('0384478d41e71dc6c3f9edde0f928a47d1b724c'
                                                              '05984ebfb4e7d0422e80abe95ff'))
         self.as_data = StackData.from_bytes(self.redeem_script.p2wsh_hash())
@@ -758,8 +728,7 @@ class TestNulldata(unittest.TestCase):
 
 class TestMultisig(unittest.TestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def setUp(self):
         self.m = 2
         self.pubkeys = [PublicKey.unhexlify("02c08786d63f78bd0a6777ffe9c978cf5899756cfc32bfad09a89e211aeb926242"),
                         PublicKey.unhexlify("033e81519ecf373ea3a5c7e1c051b71a898fb3438c9550e274d980f147eb4d069d"),
@@ -800,8 +769,7 @@ class TestIf(unittest.TestCase):
 
 class TestIfElse(unittest.TestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def setUp(self):
         self.if_script = MultisigScript(2,
                                         PublicKey.unhexlify("02c08786d63f78bd0a6777ffe9c978cf5899756cfc32bfad09a89e2"
                                                             "11aeb926242"),
@@ -830,8 +798,7 @@ class TestIfElse(unittest.TestCase):
 
 class TestTimelock(unittest.TestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def setUp(self):
         self.locktime = 500000
         self.locked_script = P2shScript(P2pkhScript(PublicKey.unhexlify("02c08786d63f78bd0a6777ffe9c978cf5899756cfc32bf"
                                                                         "ad09a89e211aeb926242")))
@@ -852,14 +819,13 @@ class TestTimelock(unittest.TestCase):
 
 class TestRelativeTimelock(unittest.TestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def setUp(self):
         self.sequence = 500000
         self.locked_script = P2shScript(P2pkhScript(PublicKey.unhexlify("02c08786d63f78bd0a6777ffe9c978cf5899756cfc32bf"
                                                                         "ad09a89e211aeb926242")))
 
     def test_success(self):
-        script = RelativeTimelockScript(Sequence(self.sequence), self.locked_script)
+        script = RelativeTimelockScript(Sequence(self.sequence), self.locked_script, strict=True)
         self.assertTrue(script.decompile() ==
                         '{} OP_CHECKSEQUENCEVERIFY OP_DROP {}'.format(Sequence(self.sequence).for_script(),
                                                                       self.locked_script.decompile()))
@@ -874,8 +840,7 @@ class TestRelativeTimelock(unittest.TestCase):
 
 class TestHashlock(unittest.TestCase):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def setUp(self):
         self.hash = PublicKey.unhexlify("02c08786d63f78bd0a6777ffe9c978cf5899756cfc32bfad09a89e211aeb926242").hash()
         self.locked_script = P2shScript(P2pkhScript(PublicKey.unhexlify("02c08786d63f78bd0a6777ffe9c978cf5899756cfc32bf"
                                                                         "ad09a89e211aeb926242")))
@@ -896,7 +861,7 @@ class TestHashlock(unittest.TestCase):
                                                                 self.locked_script.hexlify()))
 
 
-class TestAddress(RestoreStateTestCase):
+class TestAddress(unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -917,29 +882,29 @@ class TestAddress(RestoreStateTestCase):
 
     def test_success(self):
         for net, addr_type, address, hashed_data in self.good_addresses:
-            if net == "BitcoinMainnet":
-                setup(BitcoinMainnet, True, True)
+            if net == 'BitcoinMainnet':
+                net = BitcoinMainnet
             else:
-                setup(BitcoinTestnet, True, True)
-            from_string = Address.from_string(address)
+                net = BitcoinTestnet
+
+            from_string = Address.from_string(net, address)
             self.assertTrue(address == str(from_string))
             self.assertTrue(from_string.__class__ == addr_type)
             self.assertTrue(from_string.network == net)
             self.assertTrue(from_string.hash == hashed_data)
 
     def test_fail(self):
-        setup(BitcoinMainnet, True, True)
         for address in self.bad_addresses:
             with self.assertRaises(ValueError):
-                Address.from_string(address)
+                Address.from_string(BitcoinMainnet, address)
 
     def test_conversions(self):
         for address, pkh in addresses:
-            self.assertEqual(hexlify(Address.from_string(address).hash).decode(), pkh)
-            self.assertEqual(str(P2pkhScript(bytearray(unhexlify(pkh))).address()), address)
-            self.assertEqual(P2pkhScript(Address.from_string(address)).pubkeyhash,
+            self.assertEqual(hexlify(Address.from_string(BitcoinMainnet, address).hash).decode(), pkh)
+            self.assertEqual(str(P2pkhScript(bytearray(unhexlify(pkh))).address(BitcoinMainnet)), address)
+            self.assertEqual(P2pkhScript(Address.from_string(BitcoinMainnet, address)).pubkeyhash,
                              bytearray(unhexlify(pkh)))
-            self.assertEqual(P2pkhAddress(bytearray(unhexlify(pkh))).hash, bytearray(unhexlify(pkh)))
+            self.assertEqual(P2pkhAddress(BitcoinMainnet, bytearray(unhexlify(pkh))).hash, bytearray(unhexlify(pkh)))
 
 
 class TestStandardness(unittest.TestCase):
@@ -1115,11 +1080,9 @@ class TestSegwitSigs(unittest.TestCase):
                                          tx['signature'])
 
 
-class TestStrictMode(RestoreStateTestCase):
+class TestStrictMode(unittest.TestCase):
 
     def test_multisig_parsing_non_strict(self):
-        setup(BitcoinMainnet, strict=False, force=True)
-
         # 1 of 2 with one valid and one invalid public key
         script_hex = ('5121037953dbf08030f67352134992643d033417eaa6fcfb770c038f364ff40d7615882100e8f87dd9d24c3a2f1'
                       '02a5a8276c4a8f58176c961dada423b61063a312b7c270e52ae')
@@ -1132,7 +1095,7 @@ class TestStrictMode(RestoreStateTestCase):
         # 1 of 2 with two invalid public keys
         script_hex = ('512100e8f87dd9d24c3a2f102a5a8276c4a8f58176c961dada423b61063a312b7c270e2100e8f87dd9d24c3a2f1'
                       '02a5a8276c4a8f58176c961dada423b61063a312b7c270e52ae')
-        script = ScriptBuilder.identify(script_hex)
+        script = ScriptBuilder.identify(script_hex, strict=False)
         self.assertTrue(isinstance(script, MultisigScript))
         self.assertEqual(script.type, 'multisig')
         self.assertTrue(isinstance(script.pubkeys[0], StackData))
@@ -1141,15 +1104,13 @@ class TestStrictMode(RestoreStateTestCase):
         # 2 of 2 with one valid and one invalid public key
         script_hex = ('5221037953dbf08030f67352134992643d033417eaa6fcfb770c038f364ff40d7615882100e8f87dd9d24c3a2f1'
                       '02a5a8276c4a8f58176c961dada423b61063a312b7c270e52ae')
-        script = ScriptBuilder.identify(script_hex)
+        script = ScriptBuilder.identify(script_hex, strict=False)
         self.assertTrue(isinstance(script, MultisigScript))
         self.assertEqual(script.type, 'multisig')
         self.assertTrue(isinstance(script.pubkeys[0], PublicKey))
         self.assertTrue(isinstance(script.pubkeys[1], StackData))
 
     def test_multisig_parsing_strict(self):
-        setup(BitcoinMainnet, strict=True, force=True)
-
         # 1 of 2 with one valid and one invalid public key
         script_hex = ('5121037953dbf08030f67352134992643d033417eaa6fcfb770c038f364ff40d7615882100e8f87dd9d24c3a2f1'
                       '02a5a8276c4a8f58176c961dada423b61063a312b7c270e52ae')
@@ -1174,7 +1135,6 @@ class TestStrictMode(RestoreStateTestCase):
             MultisigScript(script)
 
     def test_multisig_creation_strict(self):
-        setup(BitcoinMainnet, strict=True, force=True)
         with self.assertRaises(WrongPubKeyFormat):
             MultisigScript(1, StackData.unhexlify('00'*33), StackData.unhexlify('00'*33), 2)
 
@@ -1188,55 +1148,64 @@ class TestStrictMode(RestoreStateTestCase):
         self.assertTrue(isinstance(script.pubkeys[1], PublicKey))
 
     def test_multisig_creation_non_strict(self):
-        setup(BitcoinMainnet, strict=False, force=True)
-
-        script = MultisigScript(1, StackData.unhexlify('00'*33), StackData.unhexlify('00'*33), 2)
+        script = MultisigScript(
+            1,
+            StackData.unhexlify('00'*33),
+            StackData.unhexlify('00'*33),
+            2,
+            strict=False,
+        )
         self.assertTrue(isinstance(script, MultisigScript))
         self.assertEqual(script.type, 'multisig')
         self.assertTrue(isinstance(script.pubkeys[0], StackData))
         self.assertTrue(isinstance(script.pubkeys[1], StackData))
 
-        script = MultisigScript(1,
-                                StackData.unhexlify('00'*33),
-                                PublicKey.unhexlify('0384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff'),
-                                2)
+        script = MultisigScript(
+            1,
+            StackData.unhexlify('00'*33),
+            PublicKey.unhexlify('0384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422e80abe95ff'),
+            2,
+            strict=False,
+        )
         self.assertTrue(isinstance(script, MultisigScript))
         self.assertEqual(script.type, 'multisig')
         self.assertTrue(isinstance(script.pubkeys[0], StackData))
         self.assertTrue(isinstance(script.pubkeys[1], PublicKey))
 
         with self.assertRaises(WrongScriptTypeException):
-            MultisigScript(1, StackData.unhexlify('00'*2), StackData.unhexlify('00'*33), 2)
+            MultisigScript(
+                1,
+                StackData.unhexlify('00'*2),
+                StackData.unhexlify('00'*33),
+                2,
+                strict=False,
+            )
 
     def test_p2pk_parsing_non_strict(self):
-        setup(BitcoinMainnet, strict=False, force=True)
         script_hex = '2100e8f87dd9d24c3a2f102a5a8276c4a8f58176c961dada423b61063a312b7c270eac'
-        script = ScriptBuilder.identify(script_hex)
+        script = ScriptBuilder.identify(script_hex, strict=False)
         self.assertTrue(isinstance(script, P2pkScript))
         self.assertEqual(script.type, 'p2pk')
         self.assertTrue(isinstance(script.pubkey, StackData))
 
     def test_p2pk_parsing_strict(self):
-        setup(BitcoinMainnet, strict=True, force=True)
         script_hex = '2100e8f87dd9d24c3a2f102a5a8276c4a8f58176c961dada423b61063a312b7c270eac'
         script = Script.unhexlify(script_hex)
         with self.assertRaises(WrongPubKeyFormat):
             P2pkScript(script)
 
     def test_p2pk_creation_strict(self):
-        setup(BitcoinMainnet, strict=True, force=True)
         with self.assertRaises(TypeError):
             P2pkScript(StackData.unhexlify('00'*33))
 
     def test_p2pk_creation_non_strict(self):
-        setup(BitcoinMainnet, strict=False, force=True)
-        script = P2pkScript(StackData.unhexlify('00'*33))
+        script = P2pkScript(StackData.unhexlify('00'*33), strict=False)
         self.assertTrue(isinstance(script, P2pkScript))
         self.assertEqual(script.type, 'p2pk')
         self.assertTrue(isinstance(script.pubkey, StackData))
 
         with self.assertRaises(WrongScriptTypeException):
-            P2pkScript(StackData.unhexlify('00'*30))
+            P2pkScript(StackData.unhexlify('00'*30), strict=False)
 
 
 if __name__ == '__main__':
