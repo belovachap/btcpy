@@ -16,8 +16,8 @@ from .sig import Sighash
 from .script import (ScriptBuilder, P2wpkhV0Script, P2wshV0Script, P2shScript, NulldataScript, ScriptSig,
                      CoinBaseScriptSig, ScriptPubKey)
 from ..lib.types import Immutable, Mutable, Jsonizable, HexSerializable, cached
-from ..lib.parsing import Parser, TransactionParser, Stream
-from btcpy.constants import BitcoinMainnet
+from ..lib.parsing import Parser, PeercoinTxParser, TransactionParser, Stream
+from btcpy.constants import BitcoinMainnet, PeercoinMainnet
 
 
 # noinspection PyUnresolvedReferences
@@ -367,8 +367,8 @@ class Transaction(Immutable, HexSerializable, Jsonizable):
     max_weight = 400000
 
     @classmethod
-    def unhexlify(cls, string, tx_parser=TransactionParser, network=BitcoinMainnet):
-        return cls.deserialize(bytearray(unhexlify(string)), tx_parser, network)
+    def unhexlify(cls, string, network=BitcoinMainnet):
+        return cls.deserialize(bytearray(unhexlify(string)), TransactionParser, network)
 
     @classmethod
     def deserialize(cls, string, tx_parser, network):
@@ -582,6 +582,10 @@ class PeercoinTx(Transaction):
 
         if txid != self.txid and txid is not None:
             raise ValueError('txid {} does not match transaction data {}'.format(txid, self.hexlify()))
+
+    @classmethod
+    def unhexlify(cls, string, network=PeercoinMainnet):
+        return cls.deserialize(bytearray(unhexlify(string)), PeercoinTxParser, network)
 
     @classmethod
     def from_json(cls, tx_json, network):
