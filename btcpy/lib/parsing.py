@@ -298,7 +298,7 @@ class PeercoinTxParser(TransactionParser):
         if segwit:
             raise Exception('Peercoin does not currently support SegWit.')
         else:
-            result = PeercoinTx(version, tstamp, txins, txouts, locktime)
+            result = PeercoinTx(version, tstamp, txins, txouts, locktime, self.network)
 
         return result.to_mutable() if mutable else result
 
