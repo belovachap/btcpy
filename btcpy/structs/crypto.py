@@ -10,15 +10,16 @@
 # LICENSE.md file.
 
 from binascii import unhexlify
+from ..lib.base58 import b58decode_check, b58encode_check
 from hashlib import sha256
 from ecdsa import SigningKey, SECP256k1
 from ecdsa.util import sigencode_der
 from functools import partial
 from abc import ABCMeta
 
-from btcpy.lib.base58 import b58decode_check, b58encode_check
-from btcpy.lib.types import HexSerializable
-from btcpy.structs.address import P2pkhAddress, P2wpkhAddress
+from ..lib.types import HexSerializable
+from .address import P2pkhAddress, P2wpkhAddress
+from ..constants import BitcoinMainnet
 
 
 class WrongPubKeyFormat(Exception):
@@ -29,16 +30,12 @@ class Key(HexSerializable, metaclass=ABCMeta):
     pass
 
 
-class InvalidWifLenght(Exception):
-    '''Invalid WIF lenght.'''
-
-
 class PrivateKey(Key):
 
     highest_s = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0
 
     @staticmethod
-    def from_wif(network, wif):
+    def from_wif(wif, network=BitcoinMainnet):
 
         if not 51 <= len(wif) <= 52:
             raise ValueError('Invalid wif length: {}'.format(len(wif)))
@@ -62,7 +59,7 @@ class PrivateKey(Key):
         self.key = priv
         self.public_compressed = public_compressed
 
-    def to_wif(self, network):
+    def to_wif(self, network=BitcoinMainnet):
         decoded = bytearray([network.wif_prefix]) + self.key
         if self.public_compressed:
             decoded.append(0x01)
@@ -204,15 +201,15 @@ class PublicKey(BasePublicKey):
     def serialize(self):
         return self.uncompressed if self.type == 'uncompressed' else self.compressed
 
-    def to_address(self, network):
-        return P2pkhAddress(network, self.hash())
+    def to_address(self, network=BitcoinMainnet):
+        return P2pkhAddress(self.hash(), network=network)
 
-    def to_segwit_address(self, version):
+    def to_segwit_address(self, version, network=BitcoinMainnet):
         if self.type == 'uncompressed':
             pubk = PublicKey(self.compressed)
         else:
             pubk = self
-        return P2wpkhAddress(pubk.hash(), version)
+        return P2wpkhAddress(pubk.hash(), version, network=network)
 
     def __eq__(self, other):
         return (self.type, self.compressed, self.uncompressed) == (other.type, other.compressed, other.uncompressed)

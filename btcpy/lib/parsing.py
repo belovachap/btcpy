@@ -15,6 +15,7 @@ import hashlib
 
 from .types import Serializable, HexSerializable
 from .opcodes import OpCodeConverter
+from btcpy.constants import BitcoinMainnet
 
 
 class IncompleteParsingException(ValueError):
@@ -133,34 +134,8 @@ class BlockHeaderParser(Parser):
         return BlockHeader(version, prev_block_hash, merkle_root, block_timestamp, bits, block_nonce)
 
 
-class BlockParser(BlockHeaderParser):
-
-    def __init__(self, bytes_, tx_parser, network):
-        super().__init__(bytes_)
-        self.tx_parser = tx_parser
-        self.network = network
-
-    def get_txn_count(self):
-
-        return self.parse_varint()
-
-    def get_txns(self):
-
-        txn_count = self.get_txn_count()
-        counter = 0
-        txns_parser = self.tx_parser(self >> len(self), self.network)
-        txns = []
-        for i in range(txn_count):
-            txns.append(txns_parser.get_next_tx())
-            counter += 1
-        if len(txns_parser) != 0:
-            raise IncompleteParsingException("Incomplete Block parsing, leftover data...")
-        return txns
-
-
 class TransactionParser(Parser):
-
-    def __init__(self, bytes_, network):
+    def __init__(self, bytes_, network=BitcoinMainnet):
         super().__init__(bytes_)
         self.network = network
         self.segwit = False
@@ -202,10 +177,9 @@ class TransactionParser(Parser):
     def _txout(self, n):
         from ..structs.script import ScriptBuilder
         from ..structs.transaction import TxOut
-
         value = int.from_bytes(self >> 8, 'little')
         script = ScriptBuilder.identify(self >> self.parse_varint())
-        return TxOut(value, n, script, self.network)
+        return TxOut(value, n, script, network=self.network)
 
     def _txouts(self):
         return [self._txout(i) for i in range(self.parse_varint())]
@@ -249,58 +223,35 @@ class TransactionParser(Parser):
             raise ValueError('Transaction looks like coinbase but has more than one txin')
 
         if segwit:
-            result = SegWitTransaction(version, txins, txouts, locktime, self.network)
+            result = SegWitTransaction(version, txins, txouts, locktime, network=self.network)
         else:
-            result = Transaction(version, txins, txouts, locktime, self.network)
-
+            result = Transaction(version, txins, txouts, locktime, network=self.network)
         return result.to_mutable() if mutable else result
 
 
-class PeercoinTxParser(TransactionParser):
+class BlockParser(BlockHeaderParser):
 
-    def _timestamp(self):
-        '''get transaction timestamp (peercoin specific)'''
-        return int.from_bytes(self >> 4, 'little')
+    def __init__(self, bytes_, tx_parser=TransactionParser, network=BitcoinMainnet):
+        super().__init__(bytes_)
+        self.tx_parser = tx_parser
+        self.network = network
 
-    def _txout(self, n):
-        from ..structs.script import ScriptBuilder
-        from ..structs.transaction import PeercoinTxOut
+    def get_txn_count(self):
 
-        value = int.from_bytes(self >> 8, 'little')
-        script = ScriptBuilder.identify(self >> self.parse_varint())
-        return PeercoinTxOut(value, n, script, self.network)
+        return self.parse_varint()
 
-    def get_next_tx(self, mutable=False):
-        from ..structs.script import CoinBaseScriptSig
-        from ..structs.transaction import (CoinBaseTxIn, Witness, TxIn, PeercoinTx)
+    def get_txns(self):
 
-        version = self._version()
-        tstamp = self._timestamp()
-        segwit, txins_data = self._txins_data()
-        txouts = self._txouts()
-        if segwit:
-            witness = self._witness()
-            txins = [CoinBaseTxIn(*txin_data[2:], witness=Witness(wit))
-                     if isinstance(txin_data[2], CoinBaseScriptSig)
-                     else TxIn(*txin_data, witness=Witness(wit))
-                     for txin_data, wit in zip(txins_data, witness)]
-        else:
-            txins = [CoinBaseTxIn(*txin_data[2:])
-                     if isinstance(txin_data[2], CoinBaseScriptSig)
-                     else TxIn(*txin_data)
-                     for txin_data in txins_data]
-
-        locktime = self._locktime()
-
-        if len(txins) > 1 and isinstance(txins[0], CoinBaseTxIn):
-            raise ValueError('Transaction looks like coinbase but has more than one txin')
-
-        if segwit:
-            raise Exception('Peercoin does not currently support SegWit.')
-        else:
-            result = PeercoinTx(version, tstamp, txins, txouts, locktime, self.network)
-
-        return result.to_mutable() if mutable else result
+        txn_count = self.get_txn_count()
+        counter = 0
+        txns_parser = self.tx_parser(self >> len(self), network=self.network)
+        txns = []
+        for i in range(txn_count):
+            txns.append(txns_parser.get_next_tx())
+            counter += 1
+        if len(txns_parser) != 0:
+            raise IncompleteParsingException("Incomplete Block parsing, leftover data...")
+        return txns
 
 
 class UnexpectedOperationFound(Exception):

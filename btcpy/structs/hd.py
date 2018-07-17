@@ -21,6 +21,7 @@ from abc import ABCMeta, abstractmethod
 from ..lib.types import HexSerializable
 from ..lib.parsing import Stream, Parser
 from .crypto import PrivateKey, PublicKey
+from ..constants import BitcoinMainnet
 
 
 class ExtendedKey(HexSerializable, metaclass=ABCMeta):
@@ -34,7 +35,7 @@ class ExtendedKey(HexSerializable, metaclass=ABCMeta):
         return cls(key, chaincode, 0, cls.master_parent_fingerprint, 0, hardened=True)
 
     @classmethod
-    def decode(cls, network, string):
+    def decode(cls, string, network=BitcoinMainnet):
 
         if string[0] != network.xkeys_prefix:
             raise ValueError('Encoded key not recognised: {}'.format(string))
@@ -73,7 +74,7 @@ class ExtendedKey(HexSerializable, metaclass=ABCMeta):
 
     @staticmethod
     @abstractmethod
-    def get_version():
+    def get_version(network=BitcoinMainnet):
         raise NotImplemented
 
     def __init__(self, key, chaincode, depth, pfing, index, hardened=False):
@@ -141,13 +142,13 @@ class ExtendedKey(HexSerializable, metaclass=ABCMeta):
                     self.parent_fingerprint == ExtendedKey.master_parent_fingerprint,
                     self.index == 0])
 
-    def encode(self, network):
-        return b58encode_check(bytes(self.serialize(network)))
+    def encode(self, network=BitcoinMainnet):
+        return b58encode_check(bytes(self.serialize(network=network)))
 
-    def serialize(self, network):
+    def serialize(self, network=BitcoinMainnet):
         cls = self.__class__
         result = Stream()
-        result << cls.get_version(network)
+        result << cls.get_version(network=network)
         result << self.depth.to_bytes(1, 'big')
         result << self.parent_fingerprint
         if self.hardened:
@@ -180,7 +181,7 @@ class ExtendedKey(HexSerializable, metaclass=ABCMeta):
 class ExtendedPrivateKey(ExtendedKey):
 
     @staticmethod
-    def get_version(network):
+    def get_version(network=BitcoinMainnet):
         return network.xprv_version
 
     @staticmethod
@@ -228,7 +229,7 @@ class ExtendedPrivateKey(ExtendedKey):
 class ExtendedPublicKey(ExtendedKey):
 
     @staticmethod
-    def get_version(network):
+    def get_version(network=BitcoinMainnet):
         return network.xpub_version
 
     @staticmethod

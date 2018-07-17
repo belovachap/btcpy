@@ -13,6 +13,7 @@ from abc import ABCMeta, abstractmethod
 from .base58 import b58encode_check, b58decode_check
 
 from .bech32 import decode, encode
+from ..constants import BitcoinMainnet
 from ..structs.address import Address, P2pkhAddress, P2shAddress, P2wpkhAddress, P2wshAddress
 
 
@@ -33,7 +34,7 @@ class Codec(metaclass=ABCMeta):
 
     @staticmethod
     @abstractmethod
-    def decode(string: str, strict=None) -> Address:
+    def decode(string: str, network=BitcoinMainnet) -> Address:
         raise NotImplemented
 
 
@@ -51,7 +52,7 @@ class Base58Codec(Codec):
         return b58encode_check(bytes(prefix + address.hash))
 
     @staticmethod
-    def decode(network, string):
+    def decode(string, network=BitcoinMainnet):
 
         try:
             addr_type = network.base58_prefixes[string[0]]
@@ -69,7 +70,7 @@ class Base58Codec(Codec):
         else:
             raise ValueError('Unknown address type: {}'.format(addr_type))
 
-        return cls(network, hashed_data)
+        return cls(hashed_data, network=network)
 
 
 class Bech32Codec(Codec):
@@ -82,7 +83,7 @@ class Bech32Codec(Codec):
         return encode(address.network.hrp, address.version, address.hash)
 
     @staticmethod
-    def decode(network, string):
+    def decode(string, network=BitcoinMainnet):
 
         if not string:
             raise CouldNotDecode('Impossible to decode empty string')
@@ -93,10 +94,8 @@ class Bech32Codec(Codec):
                 raise CouldNotDecode('String {} mixes upper- and lower-case characters'.format(string))
 
         string = string.lower()
-    
         if string[:2] != network.bech32_hrp:
             raise CouldNotDecode('Impossible to decode address {}'.format(string))
-
         try:
             addr_type = Bech32Codec.lengths[len(string)]
         except KeyError:
@@ -113,4 +112,4 @@ class Bech32Codec(Codec):
         else:
             raise ValueError('Unknown address type: {}'.format(addr_type))
 
-        return cls(network, bytearray(hashed_data), version)
+        return cls(bytearray(hashed_data), version, network=network)

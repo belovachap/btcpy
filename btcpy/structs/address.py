@@ -11,6 +11,8 @@
 
 from abc import ABCMeta, abstractmethod
 
+from btcpy.constants import BitcoinMainnet
+
 
 class WrongScriptType(Exception):
     pass
@@ -19,24 +21,16 @@ class WrongScriptType(Exception):
 class InvalidAddress(Exception):
     pass
 
-    @staticmethod
-    def is_valid(network, string):
-        from ..lib.codecs import CouldNotDecode
-
 
 class Address(metaclass=ABCMeta):
 
     @classmethod
-    def is_valid(cls, string):
+    def is_valid(cls, string, network=BitcoinMainnet):
         try:
-            Address.from_string(network)
-            return True
-        except CouldNotDecode:
-            try:
-                SegWitAddress.from_string(network)
-                return True
-            except CouldNotDecode:
-                return False
+            cls.from_string(string, network=network)
+        except InvalidAddress:
+            return False
+        return True
 
     @classmethod
     def get_codec(cls):
@@ -44,7 +38,7 @@ class Address(metaclass=ABCMeta):
 
     @classmethod
     @abstractmethod
-    def from_script(cls, network, script):
+    def from_script(cls, script, network=BitcoinMainnet):
         raise NotImplemented
 
     @classmethod
@@ -53,39 +47,35 @@ class Address(metaclass=ABCMeta):
         raise NotImplemented
 
     @classmethod
-    def from_string(cls, network, string):
-        return cls.get_codec().decode(network, string)
-
-    @classmethod
     def hash_length(cls):
         raise NotImplemented
-
-    def __init__(self, network, hashed_data):
-
-        if len(hashed_data) != self.__class__.hash_length():
-            raise ValueError('Hashed data must be {}-bytes long, length: {}'.format(self.__class__.hash_length(), len(hashed_data)))
-
-        self.network = network
-        self.hash = hashed_data
 
     def __str__(self):
         return self.__class__.get_codec().encode(self)
 
     @staticmethod
-    def from_string(string):
+    def from_string(string, network=BitcoinMainnet):
         from ..lib.codecs import CouldNotDecode
 
         try:
-            return ClassicAddress.decode(string)
+            return ClassicAddress.decode(string, network=network)
         except CouldNotDecode:
             try:
-                return SegWitAddress.decode(string)
+                return SegWitAddress.decode(string, network=network)
             except CouldNotDecode:
                 raise InvalidAddress
 
     @classmethod
-    def decode(cls, string):
-        return cls.get_codec().decode(string)
+    def decode(cls, string, network=BitcoinMainnet):
+        return cls.get_codec().decode(string, network=network)
+
+    def __init__(self, hashed_data, network=BitcoinMainnet):
+        if len(hashed_data) != self.__class__.hash_length():
+            raise ValueError('Hashed data must be {}-bytes long, length: {}'.format(self.__class__.hash_length(),
+                                                                                    len(hashed_data)))
+
+        self.network = network
+        self.hash = hashed_data
 
     def __eq__(self, other):
         return (self.network, self.hash) == (other.network, other.hash)
@@ -112,8 +102,8 @@ class SegWitAddress(Address, metaclass=ABCMeta):
         from ..lib.codecs import Bech32Codec
         return Bech32Codec
 
-    def __init__(self, network, hashed_data, version):
-        super().__init__(network, hashed_data)
+    def __init__(self, hashed_data, version, network=BitcoinMainnet):
+        super().__init__(hashed_data, network=network)
         self.version = version
 
     def __eq__(self, other):
@@ -127,13 +117,13 @@ class P2pkhAddress(ClassicAddress):
         return 'p2pkh'
 
     @classmethod
-    def from_script(cls, network, script):
+    def from_script(cls, script, network=BitcoinMainnet):
         from .script import P2pkhScript
         # can't use isinstance here: P2wpkhScript is child of P2pkhScript
         if script.__class__ is not P2pkhScript:
             raise WrongScriptType('Trying to produce P2pkhAddress from {} script'.format(script.__class__.__name__))
 
-        return cls(network, script.pubkeyhash)
+        return cls(script.pubkeyhash, network=network)
 
     @classmethod
     def hash_length(cls):
@@ -151,12 +141,12 @@ class P2shAddress(ClassicAddress):
         return 'p2sh'
 
     @classmethod
-    def from_script(cls, network, script):
+    def from_script(cls, script, network=BitcoinMainnet):
         from .script import P2shScript
         # can't use isinstance here: P2wshScript is child of P2shScript
         if script.__class__ is P2shScript:
-            return cls(network, script.scripthash)
-        return cls(network, script.p2sh_hash())
+            return cls(script.scripthash, network=network)
+        return cls(script.p2sh_hash(), network=network)
 
     @classmethod
     def hash_length(cls):
@@ -174,12 +164,12 @@ class P2wpkhAddress(SegWitAddress):
         return 'p2wpkh'
 
     @classmethod
-    def from_script(cls, network, script):
+    def from_script(cls, script, network=BitcoinMainnet):
         from .script import P2wpkhScript
         if not isinstance(script, P2wpkhScript):
             raise WrongScriptType('Trying to produce P2pkhAddress from {} script'.format(script.__class__.__name__))
 
-        return cls(network, script.pubkeyhash, script.__class__.get_version())
+        return cls(script.pubkeyhash, script.__class__.get_version(), network=network)
 
     @classmethod
     def hash_length(cls):
@@ -197,14 +187,14 @@ class P2wshAddress(SegWitAddress):
         return 'p2wsh'
 
     @classmethod
-    def from_script(cls, network, script):
+    def from_script(cls, script, network=BitcoinMainnet):
         from .script import P2wshScript
         version = script.__class__.get_version()
         if isinstance(script, P2wshScript):
             hashed_data = script.scripthash
         else:
             hashed_data = script.p2wsh_hash()
-        return cls(network, hashed_data, version)
+        return cls(hashed_data, version, network=network)
 
     @classmethod
     def hash_length(cls):

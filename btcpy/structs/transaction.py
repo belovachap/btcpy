@@ -18,8 +18,8 @@ from .sig import Sighash
 from .script import (ScriptBuilder, P2wpkhV0Script, P2wshV0Script, P2shScript, NulldataScript, ScriptSig,
                      CoinBaseScriptSig, ScriptPubKey)
 from ..lib.types import Immutable, Mutable, Jsonizable, HexSerializable, cached
-from ..lib.parsing import Parser, PeercoinTxParser, TransactionParser, Stream
-from btcpy.constants import BitcoinMainnet, PeercoinMainnet
+from ..lib.parsing import Parser, TransactionParser, Stream
+from btcpy.constants import BitcoinMainnet
 
 
 # noinspection PyUnresolvedReferences
@@ -261,22 +261,15 @@ class CoinBaseTxIn(TxIn):
 
 # noinspection PyUnresolvedReferences
 class TxOut(Immutable, HexSerializable, Jsonizable):
-    """
-    : value - value of the output <int>
-    : n - sequence number
-    : script_pubkey - ScriptPubkey object
-    """
 
     @classmethod
     def from_json(cls, dic, network=BitcoinMainnet):
-        return cls(
-            int(Decimal(dic['value']) * network.to_unit),
-            dic['n'],
-            ScriptBuilder.identify(bytearray(unhexlify(dic['scriptPubKey']['hex']))),
-            network,
-        )
+        return cls(int(Decimal(dic['value']) * network.to_unit),
+                   dic['n'],
+                   ScriptBuilder.identify(bytearray(unhexlify(dic['scriptPubKey']['hex']))),
+                   network=network)
 
-    def __init__(self, value: int, n: int, script_pubkey: ScriptPubKey, network):
+    def __init__(self, value: int, n: int, script_pubkey: ScriptPubKey, network=BitcoinMainnet):
         object.__setattr__(self, 'value', value)
         object.__setattr__(self, 'n', n)
         object.__setattr__(self, 'script_pubkey', script_pubkey)
@@ -300,11 +293,9 @@ class TxOut(Immutable, HexSerializable, Jsonizable):
         pass
 
     def to_json(self):
-        return {
-            'value': str(Decimal(self.value) * self.network.from_unit),
-            'n': self.n,
-            'scriptPubKey': self.script_pubkey.to_json()
-        }
+        return {'value': str(Decimal(self.value) * self.network.from_unit),
+                'n': self.n,
+                'scriptPubKey': self.script_pubkey.to_json(network=self.network)}
 
     @cached
     def serialize(self):
@@ -335,16 +326,6 @@ class TxOut(Immutable, HexSerializable, Jsonizable):
 
     def __str__(self):
         return "TxOut(value={}, n={}, scriptPubKey='{}')".format(self.value, self.n, self.script_pubkey)
-
-
-class PeercoinTxOut(TxOut):
-
-    def get_dust_threshold(self, size_to_relay_fee):
-
-        if isinstance(self.script_pubkey, NulldataScript):
-            return 0
-
-        return 0.01
 
 
 # noinspection PyUnresolvedReferences
@@ -466,21 +447,22 @@ class Witness(Immutable, HexSerializable, Jsonizable):
 class BaseTransaction(HexSerializable, Jsonizable, metaclass=ABCMeta):
 
     @classmethod
-    def from_json(cls, tx_json):
+    def from_json(cls, tx_json, network=BitcoinMainnet):
         tx = cls(version=tx_json['version'],
                  locktime=Locktime(tx_json['locktime']),
                  txid=tx_json['txid'],
                  ins=[TxIn.from_json(txin_json) for txin_json in tx_json['vin']],
-                 outs=[TxOut.from_json(txout_json) for txout_json in tx_json['vout']])
+                 outs=[TxOut.from_json(txout_json) for txout_json in tx_json['vout']],
+                 network=network)
         return tx
 
     @classmethod
-    def unhexlify(cls, string):
-        return cls.deserialize(bytearray(unhexlify(string)))
+    def unhexlify(cls, string, network=BitcoinMainnet):
+        return cls.deserialize(bytearray(unhexlify(string)), network=network)
 
     @classmethod
-    def deserialize(cls, string):
-        parser = TransactionParser(string)
+    def deserialize(cls, string, network=BitcoinMainnet):
+        parser = TransactionParser(string, network=network)
         result = parser.get_next_tx(issubclass(cls, Mutable))
         if parser:
             raise ValueError('Leftover data after transaction')
@@ -489,56 +471,32 @@ class BaseTransaction(HexSerializable, Jsonizable, metaclass=ABCMeta):
         return result
 
 
+# noinspection PyUnresolvedReferences
 class Transaction(BaseTransaction, Immutable):
-
-    ''' assemble transaction
-    : version - tranasction version (default 1)
-    : inputs - list of tx inputs, as TxIn object
-    : outputs - list of tx outputs as TxOut object
-    : locktime - tx locktime, as Locktime object
-    : txid - default None
-    '''
 
     max_version = 2
     max_weight = 400000
 
     @classmethod
-    def unhexlify(cls, string, network=BitcoinMainnet):
-        return cls.deserialize(bytearray(unhexlify(string)), TransactionParser, network)
-
-    @classmethod
-    def deserialize(cls, string):
-        parser = TransactionParser(string)
-        result = parser.get_next_tx(issubclass(cls, Mutable))
-        if parser:
-            raise ValueError('Leftover data after transaction')
-        if not isinstance(result, cls):
-            raise TypeError('Trying to load transaction from wrong transaction serialization')
-        return result
-
-    @classmethod
     def from_json(cls, tx_json, network=BitcoinMainnet):
-        return cls(
-            version=tx_json['version'],
-            locktime=Locktime(tx_json['locktime']),
-            txid=tx_json['txid'],
-            ins=[TxIn.from_json(txin_json) for txin_json in tx_json['vin']],
-            outs=[TxOut.from_json(txout_json) for txout_json in tx_json['vout']],
-            network=network,
-        )
+        tx = super().from_json(tx_json, network=network)
+        if any(txin.witness is not None for txin in tx.ins):
+            raise TypeError('Trying to load classic transaction from SegWit transaction json')
+        return tx
 
-    def __init__(self, version: int, ins: list, outs: list,
-                 locktime: Locktime, network, txid: str=None) -> None:
-
+    def __init__(self, version, ins, outs, locktime, txid=None, network=BitcoinMainnet):
         object.__setattr__(self, 'version', version)
         object.__setattr__(self, 'ins', tuple(ins))
         object.__setattr__(self, 'outs', tuple(outs))
         object.__setattr__(self, 'locktime', locktime)
         object.__setattr__(self, '_txid', txid)
         object.__setattr__(self, 'network', network)
-
         if txid != self.txid and txid is not None:
             raise ValueError('txid {} does not match transaction data {}'.format(txid, self.hexlify()))
+        # if not self.ins or not self.outs:
+        #     raise ValueError('Empty txin or txout array')
+        # if len(self.serialize()) > Block.max_size:
+        #     raise ValueError('Invalid transaction size: {}'.format(len(self.serialize())))
 
     def _base_size(self):
         return len(self.serialize())
@@ -575,17 +533,15 @@ class Transaction(BaseTransaction, Immutable):
         return ceil(self.weight / 4)
 
     def to_json(self):
-        return {
-            'hex': self.hexlify(),
-            'txid': self.txid,
-            'hash': self.hash(),
-            'size': self.size,
-            'vsize': self.vsize,
-            'version': self.version,
-            'locktime': self.locktime.n,
-            'vin': [txin.to_json() for txin in self.ins],
-            'vout': [txout.to_json() for txout in self.outs],
-        }
+        return {'hex': self.hexlify(),
+                'txid': self.txid,
+                'hash': self.hash(),
+                'size': self.size,
+                'vsize': self.vsize,
+                'version': self.version,
+                'locktime': self.locktime.n,
+                'vin': [txin.to_json() for txin in self.ins],
+                'vout': [txout.to_json() for txout in self.outs]}
 
     @cached
     def serialize(self):
@@ -609,10 +565,10 @@ class Transaction(BaseTransaction, Immutable):
         if len(prev_scripts) != len(self.ins):
             raise ValueError('Prev scripts provided are a different number than txins')
 
-        if not 1 <= self.version <= self.max_version:
+        if not 1 <= self.version <= Transaction.max_version:
             return False
 
-        if self.weight > self.max_weight:
+        if self.weight > Transaction.max_weight:
             return False
 
         for prev, txin in zip(prev_scripts, self.ins):
@@ -636,13 +592,7 @@ class Transaction(BaseTransaction, Immutable):
         return len(self.ins) == 1 and isinstance(self.ins[0], CoinBaseTxIn)
 
     def to_mutable(self):
-        return MutableTransaction(
-            self.version,
-            [txin.to_mutable() for txin in self.ins],
-            self.outs,
-            self.locktime,
-            self.network,
-        )
+        return MutableTransaction(self.version, [txin.to_mutable() for txin in self.ins], self.outs, self.locktime, network=self.network)
 
     def get_digest_preimage(self, index, prev_script, sighash=Sighash('ALL')):
 
@@ -693,104 +643,19 @@ class Transaction(BaseTransaction, Immutable):
         return ('Transaction(version={}, '
                 'ins=[{}], '
                 'outs=[{}], '
-                'locktime={}, '.format(self.version,
-                                       ', '.join(str(txin) for txin in self.ins),
-                                       ', '.join(str(out) for out in self.outs),
-                                       self.locktime,))
+                'locktime={})'.format(self.version,
+                                      ', '.join(str(txin) for txin in self.ins),
+                                      ', '.join(str(out) for out in self.outs),
+                                      self.locktime))
 
     def __eq__(self, other):
         return self.hash() == other.hash()
 
 
-class PeercoinTx(Transaction):
-
-    def __init__(self, version: int, timestamp: int, ins: list, outs: list,
-                 locktime: Locktime, network, txid: str=None) -> None:
-
-        object.__setattr__(self, 'version', version)
-        object.__setattr__(self, 'timestamp', timestamp)
-        object.__setattr__(self, 'ins', tuple(ins))
-        object.__setattr__(self, 'outs', tuple(outs))
-        object.__setattr__(self, 'locktime', locktime)
-        object.__setattr__(self, '_txid', txid)
-        object.__setattr__(self, 'network', network)
-
-        if txid != self.txid and txid is not None:
-            raise ValueError('txid {} does not match transaction data {}'.format(txid, self.hexlify()))
-
-    @classmethod
-    def unhexlify(cls, string, network=PeercoinMainnet):
-        return cls.deserialize(bytearray(unhexlify(string)), PeercoinTxParser, network)
-
-    @classmethod
-    def from_json(cls, tx_json, network):
-        return cls(
-            version=tx_json['version'],
-            timestamp=tx_json['time'],
-            locktime=Locktime(tx_json['locktime']),
-            txid=tx_json['txid'],
-            ins=[TxIn.from_json(txin_json) for txin_json in tx_json['vin']],
-            outs=[TxOut.from_json(txout_json) for txout_json in tx_json['vout']],
-            network=network,
-        )
-
-    def to_json(self):
-        return {
-            'hex': self.hexlify(),
-            'txid': self.txid,
-            'hash': self.hash(),
-            'size': self.size,
-            'vsize': self.vsize,
-            'version': self.version,
-            'timestamp': self.timestamp,
-            'locktime': self.locktime.n,
-            'vin': [txin.to_json() for txin in self.ins],
-            'vout': [txout.to_json() for txout in self.outs],
-        }
-
-    @cached
-    def serialize(self):
-        from itertools import chain
-        result = Stream()
-        result << self.version.to_bytes(4, 'little')
-        result << self.timestamp.to_bytes(4, 'little')
-        result << Parser.to_varint(len(self.ins))
-        # the most efficient way to flatten a list in python
-        result << bytearray(chain.from_iterable(txin.serialize() for txin in self.ins))
-        result << Parser.to_varint(len(self.outs))
-        # the most efficient way to flatten a list in python
-        result << bytearray(chain.from_iterable(txout.serialize() for txout in self.outs))
-        result << self.locktime
-        return result.serialize()
-
-    def to_mutable(self):
-        return PeercoinMutableTx(
-            version=self.version,
-            timestamp=self.timestamp,
-            ins=[txin.to_mutable() for txin in self.ins],
-            outs=self.outs,
-            locktime=self.locktime,
-            network=self.network,
-        )
-
-    def __str__(self):
-        return ('PeercoinTx(version={}, '
-                'ins=[{}], '
-                'outs=[{}], '
-                'locktime={}, '
-                'timestamp={} '.format(self.version,
-                                       ', '.join(str(txin) for txin in self.ins),
-                                       ', '.join(str(out) for out in self.outs),
-                                       self.locktime,
-                                       self.timestamp))
-
-
 class MutableTransaction(Mutable, Transaction):
 
-    def __init__(self, version: int, ins: list,
-                 outs: list, locktime: Locktime, network) -> None:
-
-        super().__init__(version, ins, outs, locktime, network)
+    def __init__(self, version, ins, outs, locktime, network=BitcoinMainnet):
+        super().__init__(version, ins, outs, locktime, network=network)
         ins = []
         for txin in self.ins:
             if isinstance(txin, MutableTxIn):
@@ -803,24 +668,16 @@ class MutableTransaction(Mutable, Transaction):
         self.outs = list(self.outs)
 
     def to_immutable(self):
-        return Transaction(
-            self.version,
-            [txin.to_immutable() for txin in self.ins],
-            self.outs,
-            self.locktime,
-            self.constants,
-        )
+        return Transaction(self.version, [txin.to_immutable() for txin in self.ins], self.outs, self.locktime, network=self.network)
 
     def to_segwit(self):
-        return MutableSegWitTransaction(self.version, self.ins, self.outs, self.locktime)
+        return MutableSegWitTransaction(self.version, self.ins, self.outs, self.locktime, network=self.network)
 
-    @classmethod
-    def deserialize(cls, string, tx_parser, constants):
-        parser = tx_parser(string, constants)
-        result = parser.get_next_tx(True)
-        if parser:
-            raise ValueError('Leftover data after transaction')
-        return result
+    def set_sequence(self, i, solver):
+        if solver.solves_relative_locktime():
+            self.ins[i].sequence = solver.get_relative_locktime()
+        elif solver.solves_absolute_locktime():
+            self.ins[i].sequence = Sequence(Sequence.MAX - 1)
 
     def spend_single(self, index, txout, solver):
 
@@ -866,37 +723,6 @@ class MutableTransaction(Mutable, Transaction):
         return self.to_immutable()
 
 
-class PeercoinMutableTx(PeercoinTx, MutableTransaction):
-
-    def __init__(self, version: int, timestamp: int, ins: list,
-                 outs: list, locktime: Locktime, network) -> None:
-
-        super().__init__(version, timestamp, ins, outs, locktime, network)
-        ins = []
-        for txin in self.ins:
-            if isinstance(txin, MutableTxIn):
-                ins.append(txin)
-            elif isinstance(txin, TxIn):
-                ins.append(txin.to_mutable())
-            else:
-                raise ValueError('Expected objects of type `TxIn` or `MutableTxIn`, got {} instead'.format(type(txin)))
-        self.ins = ins
-        self.outs = list(self.outs)
-
-    def to_immutable(self):
-        return PeercoinTx(
-            self.version,
-            self.timestamp,
-            [txin.to_immutable() for txin in self.ins],
-            self.outs,
-            self.locktime,
-            self.network,
-        )
-
-    def to_segwit(self):
-        raise NotImplementedError("Peercoin doesn't have SegWit.")
-
-
 class SegWitTransaction(BaseTransaction, Immutable):
 
     marker = 0x00
@@ -910,14 +736,14 @@ class SegWitTransaction(BaseTransaction, Immutable):
     #     return SegWitTransaction(tx.version, tx.ins, tx.outs, tx.locktime)
 
     @classmethod
-    def from_json(cls, tx_json):
-        tx = super().from_json(tx_json)
+    def from_json(cls, tx_json, network=BitcoinMainnet):
+        tx = super().from_json(tx_json, network=network)
         if any(txin.witness is None for txin in tx.ins):
             raise TypeError('Trying to load segwit transaction from non-segwit transaction json')
         return tx
 
-    def __init__(self, version, ins, outs, locktime, txid=None):
-        object.__setattr__(self, 'transaction', Transaction(version, ins, outs, locktime, txid))
+    def __init__(self, version, ins, outs, locktime, txid=None, network=BitcoinMainnet):
+        object.__setattr__(self, 'transaction', Transaction(version, ins, outs, locktime, txid=txid, network=network))
 
     def __getattr__(self, item):
         return getattr(self.transaction, item)
@@ -947,7 +773,8 @@ class SegWitTransaction(BaseTransaction, Immutable):
         return MutableSegWitTransaction(self.version,
                                         [txin.to_mutable() for txin in self.ins],
                                         self.outs,
-                                        self.locktime)
+                                        self.locktime,
+                                        network=self.network)
 
     def get_digest(self, index, prev_script, sighash=Sighash('ALL')):
         return self.transaction.get_digest(index, prev_script, sighash)
@@ -1081,8 +908,8 @@ class SegWitTransaction(BaseTransaction, Immutable):
 
 class MutableSegWitTransaction(Mutable, SegWitTransaction):
 
-    def __init__(self, version, ins, outs, locktime, txid=None):
-        super().__init__(version, ins, outs, locktime, txid)
+    def __init__(self, version, ins, outs, locktime, txid=None, network=BitcoinMainnet):
+        super().__init__(version, ins, outs, locktime, txid, network=network)
         ins = []
         for txin in self.ins:
             if isinstance(txin, MutableTxIn):
@@ -1097,7 +924,8 @@ class MutableSegWitTransaction(Mutable, SegWitTransaction):
         return SegWitTransaction(self.version,
                                  [txin.to_immutable() for txin in self.ins],
                                  self.outs,
-                                 self.locktime)
+                                 self.locktime,
+                                 network=self.network)
 
     def spend_single(self, index, txout, solver):
 
@@ -1162,23 +990,23 @@ class TransactionFactory(object):
         return classes[(segwit, mutable)]
 
     @classmethod
-    def deserialize(cls, string, mutable=False):
+    def deserialize(cls, string, mutable=False, network=BitcoinMainnet):
         try:
-            return cls._get_class(segwit=False, mutable=mutable).deserialize(string)
+            return cls._get_class(segwit=False, mutable=mutable).deserialize(string, network=network)
         except TypeError:
-            return cls._get_class(segwit=True, mutable=mutable).deserialize(string)
+            return cls._get_class(segwit=True, mutable=mutable).deserialize(string, network=network)
 
     @classmethod
-    def unhexlify(cls, string, mutable=False):
+    def unhexlify(cls, string, mutable=False, network=BitcoinMainnet):
         try:
-            return cls._get_class(segwit=False, mutable=mutable).unhexlify(string)
+            return cls._get_class(segwit=False, mutable=mutable).unhexlify(string, network=network)
         except TypeError:
-            return cls._get_class(segwit=True, mutable=mutable).unhexlify(string)
+            return cls._get_class(segwit=True, mutable=mutable).unhexlify(string, network=network)
 
     @classmethod
-    def from_json(cls, tx_json, mutable=False):
+    def from_json(cls, tx_json, mutable=False, network=BitcoinMainnet):
         segwit = all('txinwitness' in txin for txin in tx_json['vin'])
         if segwit:
-            return cls._get_class(segwit=True, mutable=mutable).from_json(tx_json)
+            return cls._get_class(segwit=True, mutable=mutable).from_json(tx_json, network=network)
         else:
-            return cls._get_class(segwit=False, mutable=mutable).from_json(tx_json)
+            return cls._get_class(segwit=False, mutable=mutable).from_json(tx_json, network=network)

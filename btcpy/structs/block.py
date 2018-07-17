@@ -17,6 +17,7 @@ from ..lib.types import Immutable, Jsonizable, HexSerializable, cached
 from btcpy.constants import BitcoinMainnet
 
 
+# from .transaction import Transaction
 # noinspection PyUnresolvedReferences
 class Block(Immutable, Jsonizable, HexSerializable):
 
@@ -28,11 +29,11 @@ class Block(Immutable, Jsonizable, HexSerializable):
 
     @staticmethod
     def unhexlify(string, tx_parser=TransactionParser, network=BitcoinMainnet):
-        return Block.deserialize(bytearray(unhexlify(string)), tx_parser, network)
+        return Block.deserialize(bytearray(unhexlify(string)), tx_parser=tx_parser, network=network)
 
     @staticmethod
-    def deserialize(string, tx_parser, network):
-        parser = BlockParser(string, tx_parser, network)
+    def deserialize(string, tx_parser=TransactionParser, network=BitcoinMainnet):
+        parser = BlockParser(string, tx_parser=tx_parser, network=network)
         header = parser.get_block_header()
         txns = parser.get_txns()
         return Block(header, txns)

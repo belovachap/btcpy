@@ -237,8 +237,7 @@ class BaseScript(Immutable, HexSerializable, metaclass=ABCMeta):
                 result << StackData.unhexlify(opcode).to_push_op()
         return result.serialize()
 
-    def __init__(self, bytes_, strict=True):
-        object.__setattr__(self, 'strict', strict)
+    def __init__(self, bytes_):
         object.__setattr__(self, 'body', bytes_)
 
     def __len__(self):
@@ -397,11 +396,11 @@ class ScriptPubKey(BaseScript, metaclass=ABCMeta):
     template = None
 
     @classmethod
-    def unhexlify(cls, hex_string, strict=True):
+    def unhexlify(cls, hex_string):
         if cls is ScriptPubKey:
-            return cls(bytearray(unhexlify(hex_string)), strict=strict)
+            return cls(bytearray(unhexlify(hex_string)))
         else:
-            return cls(Script(bytearray(unhexlify(hex_string))), strict=strict)
+            return cls(Script(bytearray(unhexlify(hex_string))))
 
     @classmethod
     def verify(cls, bytes_):
@@ -425,8 +424,8 @@ class ScriptPubKey(BaseScript, metaclass=ABCMeta):
         result = {'asm': str(self),
                   'hex': self.hexlify(),
                   'type': self.type}
-        if self.address(network) is not None:
-            result['address'] = str(self.address())
+        if self.address(network=network) is not None:
+            result['address'] = str(self.address(network=network))
         return result
 
     @property
@@ -464,7 +463,7 @@ class P2pkhScript(ScriptPubKey):
 
     compile_fmt = 'OP_DUP OP_HASH160 {} OP_EQUALVERIFY OP_CHECKSIG'
 
-    def __init__(self, param, strict=True):
+    def __init__(self, param):
         """
         :param param: can be either of type `Script`, `PublicKey`, `Address` or `bytearray`.
         In the first case the script is verified and the public key hash is extracted.
@@ -488,14 +487,7 @@ class P2pkhScript(ScriptPubKey):
         else:
             raise TypeError('Wrong type for P2pkhScript __init__: {}'.format(type(param)))
 
-        super().__init__(
-            self.compile(
-                self.compile_fmt.format(
-                    hexlify(self.pubkeyhash).decode(),
-                ),
-            ),
-            strict=strict,
-        )
+        super().__init__(self.compile(self.compile_fmt.format(hexlify(self.pubkeyhash).decode())))
 
     def __repr__(self):
         return "P2pkhScript('{}')".format(hexlify(self.pubkeyhash).decode())
@@ -505,7 +497,7 @@ class P2pkhScript(ScriptPubKey):
         return 'p2pkh'
 
     def address(self, network=BitcoinMainnet):
-        return P2pkhAddress.from_script(network, self)
+        return P2pkhAddress.from_script(self, network=network)
 
     def is_standard(self):
         return True
@@ -529,7 +521,7 @@ class P2wpkhScript(P2pkhScript, SegWitScript, metaclass=ABCMeta):
         raise ValueError('Undefined version: {}'.format(segwit_version))
 
     def address(self, network=BitcoinMainnet):
-        return P2wpkhAddress.from_script(network, self)
+        return P2wpkhAddress.from_script(self, network=network)
 
 
 class P2wpkhV0Script(P2wpkhScript):
@@ -542,11 +534,11 @@ class P2wpkhV0Script(P2wpkhScript):
     def get_version():
         return 0
 
-    def __init__(self, param, strict=True):
+    def __init__(self, param):
         if isinstance(param, P2wpkhAddress):
             param = param.hash
 
-        super().__init__(param, strict)
+        super().__init__(param)
 
     def __repr__(self):
         return "P2wpkhScript('{}')".format(hexlify(self.pubkeyhash).decode())
@@ -566,7 +558,7 @@ class P2shScript(ScriptPubKey):
 
     compile_fmt = 'OP_HASH160 {} OP_EQUAL'
 
-    def __init__(self, param, strict=True):
+    def __init__(self, param):
         """
         :param param: can be either of type `Script`, `ScriptPubKey`, `Address` or `bytearray`.
         In the first case, the script is verified and the hash of the redeem script is extracted.
@@ -576,7 +568,7 @@ class P2shScript(ScriptPubKey):
         """
         if isinstance(param, Script):
             object.__setattr__(self, 'scripthash', self.verify(param.body).data)
-            super().__init__(param.body, strict=strict)
+            super().__init__(param.body)
             # note: if we do not return here, we are going to call super().__init__ twice
             return
 
@@ -589,14 +581,7 @@ class P2shScript(ScriptPubKey):
         else:
             raise TypeError('Wrong type for P2shScript __init__: {}'.format(type(param)))
 
-        super().__init__(
-            self.compile(
-                self.compile_fmt.format(
-                    hexlify(self.scripthash).decode(),
-                ),
-            ),
-            strict=strict,
-        )
+        super().__init__(self.compile(self.compile_fmt.format(hexlify(self.scripthash).decode())))
 
     def __repr__(self):
         return "P2shScript('{}')".format(hexlify(self.scripthash).decode())
@@ -609,7 +594,7 @@ class P2shScript(ScriptPubKey):
         return True
 
     def address(self, network=BitcoinMainnet):
-        return P2shAddress.from_script(network, self)
+        return P2shAddress.from_script(self, network=network)
 
 
 class P2wshScript(P2shScript, SegWitScript, metaclass=ABCMeta):
@@ -622,7 +607,7 @@ class P2wshScript(P2shScript, SegWitScript, metaclass=ABCMeta):
         raise ValueError('Undefined version: {}'.format(segwit_version))
 
     def address(self, network=BitcoinMainnet):
-        return P2wshAddress.from_script(network, self)
+        return P2wshAddress.from_script(self, network=network)
 
 
 # noinspection PyUnresolvedReferences
@@ -636,7 +621,7 @@ class P2wshV0Script(P2wshScript):
     def get_version():
         return 0
 
-    def __init__(self, param, strict=True):
+    def __init__(self, param):
         if isinstance(param, P2wpkhScript):
             raise ValueError("Can't embed P2WPKH script in P2WSH format")
         # segwit p2wsh have different hashing method than regular p2sh scripts!
@@ -645,7 +630,7 @@ class P2wshV0Script(P2wshScript):
         if isinstance(param, P2wshAddress):
             param = param.hash
 
-        super().__init__(param, strict)
+        super().__init__(param)
 
     def __repr__(self):
         return "P2wshV0Script('{}')".format(hexlify(self.scripthash).decode())
@@ -660,7 +645,7 @@ class P2pkScript(ScriptPubKey):
 
     template = '<33|65> OP_CHECKSIG'
 
-    def __init__(self, param, strict=True):
+    def __init__(self, param, strict=None):
         """
         :param param: can be either of type `Script` or `PublicKey`.
         In the first case it is verified and the public key is extracted.
@@ -676,13 +661,10 @@ class P2pkScript(ScriptPubKey):
                     raise
                 object.__setattr__(self, 'pubkey', pubkey)
 
-            super().__init__(param.body, strict=strict)
+            super().__init__(param.body)
         elif isinstance(param, PublicKey):
             object.__setattr__(self, 'pubkey', param)
-            super().__init__(
-                self.compile('{} OP_CHECKSIG'.format(self.pubkey.hexlify())),
-                strict=strict,
-            )
+            super().__init__(self.compile('{} OP_CHECKSIG'.format(self.pubkey.hexlify())))
         elif isinstance(param, StackData):
             if strict:
                 raise TypeError('Must provide an object of type PublicKey in strict mode')
@@ -709,7 +691,7 @@ class NulldataScript(ScriptPubKey):
     template = 'OP_RETURN <1-83>'
     max_nulldata_data_size = 80
 
-    def __init__(self, param, strict=True):
+    def __init__(self, param):
         """
         :param param: can be either of type `Script` or `StackData`.
         In the first case the script is verified and the data is extracted.
@@ -717,13 +699,10 @@ class NulldataScript(ScriptPubKey):
         """
         if isinstance(param, Script):
             object.__setattr__(self, 'data', self.verify(param.body))
-            super().__init__(param.body, strict=strict)
+            super().__init__(param.body)
         elif isinstance(param, StackData):
             object.__setattr__(self, 'data', param)
-            super().__init__(
-                self.compile('OP_RETURN {}'.format(param)),
-                strict=strict,
-            )
+            super().__init__(self.compile('OP_RETURN {}'.format(param)))
         else:
             raise TypeError('Wrong type for NulldataScript __init__: {}'.format(type(param)))
 
@@ -768,7 +747,7 @@ class MultisigScript(ScriptPubKey):
         return valid
 
     @classmethod
-    def verify(cls, bytes_, strict=True):
+    def verify(cls, bytes_, strict=None):
 
         parser = ScriptParser(bytes_)
         if not bytes_:
@@ -792,7 +771,7 @@ class MultisigScript(ScriptPubKey):
 
         return [int(m)] + pubkeys + [int(n)]
 
-    def __init__(self, *args, strict=True):
+    def __init__(self, *args, strict=None):
         """
         :param args: if one arg is provided that is interpreted as a precompiled script which needs
         verification to see if it belongs to this type. Once verification is done, `m`, a list of pubkeys
@@ -805,7 +784,7 @@ class MultisigScript(ScriptPubKey):
         if len(args) == 1:
             # we expect something of type Script
             script = args[0]
-            super().__init__(script.body, strict=strict)
+            super().__init__(script.body)
             m, *pubkeys, n = self.verify(script.body, strict=strict)
         else:
             m, *pubkeys, n = args
@@ -823,16 +802,10 @@ class MultisigScript(ScriptPubKey):
 
         if len(args) != 1:
             # in this case we haven't called super().__init__() yet
-            super().__init__(
-                self.compile(
-                    '{} {} {} OP_CHECKMULTISIG'.format(
-                        StackData.from_int(self.m),
-                        ' '.join([pubk.hexlify() for pubk in self.pubkeys]),
-                        StackData.from_int(len(self.pubkeys)),
-                    ),
-                ),
-                strict=strict,
-            )
+            super().__init__(self.compile('{} {} {} '
+                                          'OP_CHECKMULTISIG'.format(StackData.from_int(self.m),
+                                                                    ' '.join([pubk.hexlify() for pubk in self.pubkeys]),
+                                                                    StackData.from_int(len(self.pubkeys)))))
 
     def __repr__(self):
         return "MultisigScript('{}', {}, '{}')".format(self.m,
@@ -910,7 +883,7 @@ class IfElseScript(ScriptPubKey):
             raise WrongScriptTypeException(str(exc))
 
     # noinspection PyMissingConstructor
-    def __init__(self, *args, strict=True):
+    def __init__(self, *args):
         """
         :param args: if one arg is provided, it is interpreted as a script, which is in turn
         verified and if-branch and else-branch are extracted. If two args are provided they
@@ -924,19 +897,16 @@ class IfElseScript(ScriptPubKey):
             if_script, else_script = self.verify(script.body)
             object.__setattr__(self, 'if_script', if_script)
             object.__setattr__(self, 'else_script', else_script)
-            super().__init__(script.body, strict=strict)
+            super().__init__(script.body)
         elif len(args) == 2:
             if_script, else_script = args
             object.__setattr__(self, 'if_script', if_script)
             object.__setattr__(self, 'else_script', else_script)
-            super().__init__(
-                bytearray([OpCodeConverter.to_int('OP_IF')]) +
-                self.if_script.serialize() +
-                bytearray([OpCodeConverter.to_int('OP_ELSE')]) +
-                self.else_script.serialize() +
-                bytearray([OpCodeConverter.to_int('OP_ENDIF')]),
-                strict=strict,
-            )
+            super().__init__(bytearray([OpCodeConverter.to_int('OP_IF')]) +
+                             self.if_script.serialize() +
+                             bytearray([OpCodeConverter.to_int('OP_ELSE')]) +
+                             self.else_script.serialize() +
+                             bytearray([OpCodeConverter.to_int('OP_ENDIF')]))
         else:
             raise TypeError('Wrong number of params for IfElseScript __init__: {}'.format(len(args)))
 
@@ -963,7 +933,7 @@ class AbsoluteTimelockScript(ScriptPubKey):
         except (UnexpectedOperationFound, StopIteration, IndexError) as exc:
             raise WrongScriptTypeException(str(exc))
 
-    def __init__(self, *args, strict=True):
+    def __init__(self, *args):
         """
         :param args: if one arg is provided it is interpreted as a script, which is in turn
         verified and `locktime` and `locked_script` are extracted. If two args are provided,
@@ -977,7 +947,7 @@ class AbsoluteTimelockScript(ScriptPubKey):
             object.__setattr__(self, 'locked_script', locked_script)
             object.__setattr__(self, 'locktime', locktime)
 
-            super().__init__(script.body, strict=strict)
+            super().__init__(script.body)
         elif len(args) == 2:
             locktime, locked_script = args
             if not isinstance(locktime, Locktime):
@@ -993,7 +963,7 @@ class AbsoluteTimelockScript(ScriptPubKey):
             script_body << OpCodeConverter.to_int('OP_DROP')
             script_body << self.locked_script
 
-            super().__init__(script_body.serialize(), strict=strict)
+            super().__init__(script_body.serialize())
 
         else:
             raise TypeError('Wrong number of params for AbsoluteTimelockScript __init__: {}'.format(len(args)))
@@ -1021,7 +991,7 @@ class RelativeTimelockScript(ScriptPubKey):
         except (UnexpectedOperationFound, StopIteration) as exc:
             raise WrongScriptTypeException(str(exc))
 
-    def __init__(self, *args, strict):
+    def __init__(self, *args):
         """
         :param args: if one arg is provided, it is interpreted as a script, which is in turn
         verified and `sequence` and `locked_script` are extracted. If two args are provided,
@@ -1034,7 +1004,7 @@ class RelativeTimelockScript(ScriptPubKey):
             sequence, locked_script = self.verify(script.body)
             object.__setattr__(self, 'locked_script', locked_script)
             object.__setattr__(self, 'sequence', Sequence(int(sequence)))
-            super().__init__(script.body, strict=strict)
+            super().__init__(script.body)
         elif len(args) == 2:
             sequence, locked_script = args
             object.__setattr__(self, 'sequence', sequence)
@@ -1045,7 +1015,7 @@ class RelativeTimelockScript(ScriptPubKey):
             script_body << OpCodeConverter.to_int('OP_DROP')
             script_body << self.locked_script
 
-            super().__init__(script_body.serialize(), strict=strict)
+            super().__init__(script_body.serialize())
         else:
             raise TypeError('Wrong number of params for RelativeTimelockScript __init__: {}'.format(len(args)))
 
@@ -1090,7 +1060,7 @@ class HashlockScript(ScriptPubKey):
         except (UnexpectedOperationFound, StopIteration) as exc:
             raise WrongScriptTypeException(str(exc))
 
-    def __init__(self, *args, strict=True):
+    def __init__(self, *args):
         """
         :param args: if one arg is provided, it is interpreted as a script, which is in turn
         verified and `hash` and `locked_script` are extracted. If two args are provided,
@@ -1105,7 +1075,7 @@ class HashlockScript(ScriptPubKey):
             if not isinstance(lock_hash, StackData):
                 lock_hash = StackData.from_bytes(lock_hash)
             object.__setattr__(self, 'hash', lock_hash)
-            super().__init__(script.body, strict=strict)
+            super().__init__(script.body)
         elif len(args) == 2:
             lock_hash, locked_script = args
             object.__setattr__(self, 'locked_script', locked_script)
@@ -1117,7 +1087,7 @@ class HashlockScript(ScriptPubKey):
             script_body << self.hash.to_push_op()
             script_body << OpCodeConverter.to_int('OP_EQUALVERIFY')
             script_body << self.locked_script
-            super().__init__(script_body.serialize(), strict=strict)
+            super().__init__(script_body.serialize())
         else:
             raise TypeError('Wrong number of params for HashlockScript __init__: {}'.format(len(args)))
 
@@ -1189,7 +1159,7 @@ class ScriptBuilder(object):
     not_allowed_redeem = {P2shScript}  # can't be an external RedeemScript format
 
     @staticmethod
-    def identify(raw_script, inner=False, redeem=False, strict=True):
+    def identify(raw_script, inner=False, redeem=False):
 
         if isinstance(raw_script, str):
             raw_script = bytearray(unhexlify(raw_script))
@@ -1202,9 +1172,9 @@ class ScriptBuilder(object):
             ignore = set()
 
         for script_type in [script for script in ScriptBuilder.types if script not in ignore]:
-            try:    
+            try:
                 # print('Trying {}...'.format(script_type.__name__))
-                candidate = script_type(Script(raw_script, strict=strict), strict=strict)
+                candidate = script_type(Script(raw_script))
                 # print('Success')
                 return candidate
             except (WrongScriptTypeException, WrongPubKeyFormat, WrongPushDataOp) as exc:
