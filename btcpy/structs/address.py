@@ -16,12 +16,18 @@ class WrongScriptType(Exception):
     pass
 
 
-class BaseAddress(metaclass=ABCMeta):
+class InvalidAddress(Exception):
+    pass
 
     @staticmethod
     def is_valid(network, string):
         from ..lib.codecs import CouldNotDecode
 
+class Address(metaclass=ABCMeta):
+
+    @classmethod
+    @strictness
+    def is_valid(cls, string, strict=None):
         try:
             Address.from_string(network, string)
             return True
@@ -32,9 +38,8 @@ class BaseAddress(metaclass=ABCMeta):
             except CouldNotDecode:
                 return False
 
-    @staticmethod
-    @abstractmethod
-    def get_codec():
+    @classmethod
+    def get_codec(cls):
         raise NotImplemented
 
     @classmethod
@@ -66,22 +71,46 @@ class BaseAddress(metaclass=ABCMeta):
     def __str__(self):
         return self.__class__.get_codec().encode(self)
 
-
-class Address(BaseAddress, metaclass=ABCMeta):
-
     @staticmethod
-    def get_codec():
-        from ..lib.codecs import Base58Codec
-        return Base58Codec
+    @strictness
+    def from_string(string, strict=None):
+        from ..lib.codecs import CouldNotDecode
+
+        try:
+            return ClassicAddress.decode(string, strict=strict)
+        except CouldNotDecode:
+            try:
+                return SegWitAddress.decode(string, strict=strict)
+            except CouldNotDecode:
+                raise InvalidAddress
+
+    @classmethod
+    @strictness
+    def decode(cls, string, strict=None):
+        return cls.get_codec().decode(string, strict=strict)
 
     def __eq__(self, other):
         return (self.network, self.hash) == (other.network, other.hash)
 
+    def get_script_type(self):
+        raise NotImplemented
 
-class SegWitAddress(BaseAddress, metaclass=ABCMeta):
+    def to_script(self):
+        return self.get_script_type()(self.hash)
 
-    @staticmethod
-    def get_codec():
+
+class ClassicAddress(Address, metaclass=ABCMeta):
+
+    @classmethod
+    def get_codec(cls):
+        from ..lib.codecs import Base58Codec
+        return Base58Codec
+
+
+class SegWitAddress(Address, metaclass=ABCMeta):
+
+    @classmethod
+    def get_codec(cls):
         from ..lib.codecs import Bech32Codec
         return Bech32Codec
 
@@ -90,10 +119,10 @@ class SegWitAddress(BaseAddress, metaclass=ABCMeta):
         self.version = version
 
     def __eq__(self, other):
-        return (self.network, self.hash, self.version) == (other.network, other.hash, other.version)
+        return self.version == other.version and super().__eq__(other)
 
 
-class P2pkhAddress(Address):
+class P2pkhAddress(ClassicAddress):
 
     @classmethod
     def get_type(cls):
@@ -112,8 +141,12 @@ class P2pkhAddress(Address):
     def hash_length(cls):
         return 20
 
+    def get_script_type(self):
+        from .script import P2pkhScript
+        return P2pkhScript
 
-class P2shAddress(Address):
+
+class P2shAddress(ClassicAddress):
 
     @classmethod
     def get_type(cls):
@@ -130,6 +163,10 @@ class P2shAddress(Address):
     @classmethod
     def hash_length(cls):
         return 20
+
+    def get_script_type(self):
+        from .script import P2shScript
+        return P2shScript
 
 
 class P2wpkhAddress(SegWitAddress):
@@ -149,6 +186,10 @@ class P2wpkhAddress(SegWitAddress):
     @classmethod
     def hash_length(cls):
         return 20
+
+    def get_script_type(self):
+        from .script import P2wpkhScript
+        return P2wpkhScript.get(self.version)
 
 
 class P2wshAddress(SegWitAddress):
@@ -170,3 +211,7 @@ class P2wshAddress(SegWitAddress):
     @classmethod
     def hash_length(cls):
         return 32
+
+    def get_script_type(self):
+        from .script import P2wshScript
+        return P2wshScript.get(self.version)

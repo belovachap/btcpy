@@ -11,6 +11,7 @@
 
 
 import unittest
+from random import random
 from unittest.mock import patch
 
 from btcpy.constants import (
@@ -19,11 +20,12 @@ from btcpy.constants import (
     PeercoinMainnet,
     PeercoinTestnet,
 )
+from btcpy.structs.crypto import PublicKey, PrivateKey
 from btcpy.structs.transaction import *
 from btcpy.structs.script import *
 from btcpy.structs.block import *
-from btcpy.structs.crypto import PublicKey, PrivateKey
-from btcpy.structs.address import Address, SegWitAddress, P2shAddress, P2wshAddress
+from btcpy.structs.sig import *
+from btcpy.structs.address import Address, SegWitAddress, P2shAddress, ClassicAddress
 from btcpy.lib.codecs import CouldNotDecode
 from btcpy.structs.hd import *
 from btcpy.lib.base58 import (
@@ -43,7 +45,11 @@ def get_data(filename):
         return json.load(infile)
 
 
+locktime_dates = get_data('locktime_dates')
+locktime_ordering = get_data('locktime_ordering')
+sequence_ordering = get_data('sequence_ordering')
 transactions = get_data('rawtxs')
+json_txs = get_data('tx_json')
 scripts = get_data('scripts')
 unknownscripts = get_data('unknownscripts')
 keys = get_data('xkeys')
@@ -66,6 +72,8 @@ wif = get_data('wif')
 p2wpkh_over_p2sh = get_data("p2wpkh_over_p2sh")
 p2wsh_over_p2sh = get_data("p2wsh_over_p2sh")
 serialization_data = get_data('stack_data/serialization')
+sequence_numbers = get_data('sequence')
+sequence_times = get_data('sequence_time')
 
 
 class TestB58(unittest.TestCase):
@@ -91,7 +99,7 @@ class TestSegwitHashes(unittest.TestCase):
 
     def test_hashes(self):
         for tx in segwit_hashes:
-            parsed = Transaction.unhexlify(tx['tx'])
+            parsed = TransactionFactory.unhexlify(tx['tx'])
             self.assertEqual(parsed.txid, tx['txid'])
             self.assertEqual(parsed.hash(), tx['hash'])
 
@@ -139,8 +147,8 @@ class TestNormalizedId(unittest.TestCase):
 
     def test(self):
         for tx1, tx2 in malleated_txs:
-            tx1 = Transaction.unhexlify(tx1)
-            tx2 = Transaction.unhexlify(tx2)
+            tx1 = TransactionFactory.unhexlify(tx1)
+            tx2 = TransactionFactory.unhexlify(tx2)
             self.assertNotEqual(tx1.txid, tx2.txid)
             self.assertEqual(tx1.normalized_id, tx2.normalized_id)
 
@@ -242,14 +250,23 @@ class TestTransaction(unittest.TestCase):
 
     def test_serialization(self):
         for data in transactions:
-            tx = Transaction.unhexlify(data['raw'])
+            tx = TransactionFactory.unhexlify(data['raw'])
             computed = tx.hexlify()
             original = data['raw']
             self.assertEqual(computed, original)
 
+    def test_jsonization(self):
+        for data in transactions:
+            tx = TransactionFactory.unhexlify(data['raw'])
+            self.assertEqual(TransactionFactory.from_json(tx.to_json()).to_json(), tx.to_json())
+
+        for tx in json_txs:
+            self.assertEqual(TransactionFactory.from_json(tx), TransactionFactory.unhexlify(tx['hex']))
+            self.assertEqual(TransactionFactory.unhexlify(tx['hex']).to_json(), tx)
+
     def test_txid(self):
         for data in transactions:
-            self.assertEqual(Transaction.unhexlify(data['raw']).txid, data['txid'])
+            self.assertEqual(TransactionFactory.unhexlify(data['raw']).txid, data['txid'])
 
     def test_script(self):
         for key, value in scripts.items():
@@ -293,7 +310,7 @@ class TestSegWitAddress(unittest.TestCase):
     def test_invalid(self):
         for address in segwit_invalid_addresses:
             with self.assertRaises(CouldNotDecode):
-                print(SegWitAddress.from_string(BitcoinMainnet, address))
+                print(SegWitAddress.decode(address, strict=False))
 
 
 class TestSegwitOverP2sh(unittest.TestCase):
@@ -316,11 +333,12 @@ class TestSegwitOverP2sh(unittest.TestCase):
 class TestReplace(unittest.TestCase):
 
     def test_success(self):
+        from random import randint
         for transaction in transactions:
-            tx = MutableTransaction.unhexlify(transaction['raw'])
+            tx = TransactionFactory.unhexlify(transaction['raw'], mutable=True)
             self.assertEqual(tx.is_replaceable(), transaction['replaceable'])
-            if len(tx.ins) > 2:
-                tx.ins[1].sequence = Sequence(0xfffffffd)
+            if len(tx.ins) > 2 and not transaction['replaceable']:
+                tx.ins[1].sequence = Sequence(randint(0, 0xfffffffe))
                 self.assertTrue(tx.ins[1].is_replaceable())
                 self.assertFalse(tx.ins[2].is_replaceable())
                 self.assertTrue(tx.is_replaceable())
@@ -817,7 +835,7 @@ class TestTimelock(unittest.TestCase):
                                                                         "ad09a89e211aeb926242")))
 
     def test_success(self):
-        script = TimelockScript(Locktime(self.locktime), self.locked_script)
+        script = AbsoluteTimelockScript(Locktime(self.locktime), self.locked_script)
         self.assertTrue(script.decompile() ==
                         '{} OP_CHECKLOCKTIMEVERIFY OP_DROP {}'.format(Locktime(self.locktime).for_script(),
                                                                       self.locked_script.decompile()))
@@ -826,8 +844,85 @@ class TestTimelock(unittest.TestCase):
 
     def test_matching_fail_wrong_op(self):
         with self.assertRaises(WrongScriptTypeException):
-            TimelockScript.unhexlify('{}b1aa{}'.format(Locktime(self.locktime).for_script().hexlify(),
+            AbsoluteTimelockScript.unhexlify('{}b1aa{}'.format(Locktime(self.locktime).for_script().hexlify(),
                                                        self.locked_script.hexlify()))
+
+
+class TestSequence(unittest.TestCase):
+
+    @staticmethod
+    def td_compare(td1, td2):
+        """in our case two timedeltas are equal if they differ by no more than 512*2 seconds"""
+        return int(td1.total_seconds()) in range(max(int(td2.total_seconds()) - 512, 0),
+                                                 int(td2.total_seconds()) + 512 + 1)
+
+    def test_baseclass(self):
+        for data in sequence_numbers:
+            created = Sequence.create(**data['params'])
+            self.assertEqual(created.seq, data['sequence'])
+            self.assertEqual(created.n, data['params']['seq'])
+            self.assertEqual(not created.is_active(), data['params']['disable'])
+            self.assertEqual(created.is_blocks(), data['params']['blocks'])
+            self.assertEqual(not created.is_time(), data['params']['blocks'])
+
+    def test_timebased(self):
+        for data in sequence_numbers:
+            if data['params']['blocks'] or data['params']['disable']:
+                with self.assertRaises(ValueError):
+                    TimeBasedSequence(data['sequence'])
+            else:
+                created = TimeBasedSequence.create(data['params']['seq'])
+                self.assertTrue(created.is_time())
+                self.assertFalse(created.is_blocks())
+                self.assertTrue(created.is_active())
+
+    def test_timedeltas(self):
+        from datetime import timedelta
+        for data in sequence_times:
+            td = timedelta(**data['date'])
+            seq = TimeBasedSequence.from_timedelta(td)
+            self.assertTrue(self.td_compare(seq.to_timedelta(), td))
+
+    def test_heightbased(self):
+        for data in sequence_numbers:
+            if (not data['params']['blocks']) or data['params']['disable']:
+                with self.assertRaises(ValueError):
+                    HeightBasedSequence(data['sequence'])
+            else:
+                created = HeightBasedSequence.create(data['params']['seq'])
+                self.assertFalse(created.is_time())
+                self.assertTrue(created.is_blocks())
+                self.assertTrue(created.is_active())
+
+    def test_lt(self):
+        for data in sequence_ordering:
+            if data['outcome'] == 'error':
+                with self.assertRaisesRegex(ValueError, data['error_regex']):
+                    max([Sequence(x) for x in data['data']])
+            else:
+                self.assertEqual(max([Sequence(x) for x in data['data']]), Sequence(data['outcome']))
+
+
+class TestLocktime(unittest.TestCase):
+
+    def test_lt(self):
+        for data in locktime_ordering:
+            if data['outcome'] == 'error':
+                with self.assertRaises(ValueError):
+                    max([Locktime(x) for x in data['data']])
+            else:
+                self.assertEqual(max([Locktime(x) for x in data['data']]), Locktime(data['outcome']))
+
+    def test_dates(self):
+        from datetime import datetime, timezone
+        for data in locktime_dates:
+            if data['timestamp'] == 'error':
+                with self.assertRaises(ValueError):
+                    Locktime.from_datetime(datetime(tzinfo=timezone.utc, **data['data']))
+            else:
+                self.assertEqual(Locktime.from_datetime(datetime(tzinfo=timezone.utc,
+                                                                 **data['data'])).n,
+                                 data['timestamp'])
 
 
 class TestRelativeTimelock(unittest.TestCase):
@@ -908,7 +1003,7 @@ class TestBitcoinAddress(unittest.TestCase):
     def test_fail(self):
         for address in self.bad_addresses:
             with self.assertRaises(ValueError):
-                Address.from_string(BitcoinMainnet, address)
+                ClassicAddress.decode(address, strict=False)
 
     def test_conversions(self):
         for address, pkh in addresses:
@@ -968,6 +1063,19 @@ class TestPeercoinTx(unittest.TestCase):
         raw = '01000000f7ae3b5b01b3a00d828f5a9a8e908fb59353b4a87132a75a6d939c6e9338e3727631a65028010000006c493046022100e3a72a3a9f53eab66186da5354a58a6fb4b4fc96c5836445bce0b3755840653f022100f7013eb0c3bbd901a8e9c4935edefa9765fa5dd2f1f3a276634d248a4e17c59801210207c75090d56b94a9f638b8b9abaa346c053db265f4aa752170b86c32cdec7efbffffffff0260d3e815000000001976a914c8ec65800888c2c4f831826ba7e10603b3692db188ac00e1f505000000001976a914ba96e0c304ad07afb115d7019b9e54db96668f9988ac00000000'
         PeercoinTx.unhexlify(raw, network=PeercoinTestnet)
 
+    def test_to_script(self):
+        data = {}
+        for addr, pkh in addresses:
+            data[addr] = P2pkhScript(bytearray(unhexlify(pkh)))
+        for script, addr in p2sh.items():
+            data[addr] = P2shScript(ScriptBuilder.identify(script))
+        for dic in segwit_valid_addresses:
+            data[dic['address']] = ScriptBuilder.identify(dic['script'])
+
+        for addr, script in data.items():
+            self.assertTrue(Address.from_string(addr, strict=False).to_script().hexlify(),
+                            script.hexlify())
+
 
 class TestStandardness(unittest.TestCase):
 
@@ -1013,16 +1121,16 @@ class TestStandardness(unittest.TestCase):
 
     def test_txin_success(self):
         # coinbase txin
-        txin = Transaction.unhexlify('01000000010000000000000000000000000000000000000000000000000000000000000000'
-                                     'ffffffff3d039920071c2f706f6f6c2e626974636f696e2e636f6d2f4249503130302f4238'
-                                     '2f0a092f4542312f4144362f109c52640027ed852ba74c0741c3eb0100ffffffff01505266'
-                                     '53000000001976a9143fa71ed2e38d431960f314e7e7aad476a5496b4c88ac00000000').ins[0]
+        txin = TransactionFactory.unhexlify('01000000010000000000000000000000000000000000000000000000000000000000000000'
+                                            'ffffffff3d039920071c2f706f6f6c2e626974636f696e2e636f6d2f4249503130302f4238'
+                                            '2f0a092f4542312f4144362f109c52640027ed852ba74c0741c3eb0100ffffffff01505266'
+                                            '53000000001976a9143fa71ed2e38d431960f314e7e7aad476a5496b4c88ac00000000').ins[0]
         self.assertTrue(txin.is_standard())
-        txin = Transaction.unhexlify('0100000001e4da173fbefe5e60ff63dfd38566ade407532294db655463b77a783f379ce6050000000'
-                                     '06b483045022100af246c27890c2bc07a0b7450d3d82509702a44a4defdff766355240b114ee2ac02'
-                                     '207bb67b468452fa1b325dd5583879f5c1412e0bb4dae1c2c96c7a408796ab76f1012102ab9e85755'
-                                     '36a1e99604a158fc60fe2ebd1cb1839e919b4ca42b8d050cfad71b2ffffffff0100c2eb0b00000000'
-                                     '1976a914df76c017354ac39bde796abe4294d31de8b5788a88ac00000000').ins[0]
+        txin = TransactionFactory.unhexlify('0100000001e4da173fbefe5e60ff63dfd38566ade407532294db655463b77a783f379ce6050000000'
+                                            '06b483045022100af246c27890c2bc07a0b7450d3d82509702a44a4defdff766355240b114ee2ac02'
+                                            '207bb67b468452fa1b325dd5583879f5c1412e0bb4dae1c2c96c7a408796ab76f1012102ab9e85755'
+                                            '36a1e99604a158fc60fe2ebd1cb1839e919b4ca42b8d050cfad71b2ffffffff0100c2eb0b00000000'
+                                            '1976a914df76c017354ac39bde796abe4294d31de8b5788a88ac00000000').ins[0]
         self.assertTrue(txin.is_standard())
 
         # actual redeem script (15 sigops: 14 OP_CHECKMULTISIGVERIFY + OP_CHECKSIG)
@@ -1099,22 +1207,26 @@ class TestSegwitSigs(unittest.TestCase):
 
     def test_hash_prevouts(self):
         for tx in self.data:
-            unsigned = SegWitTransaction.unhexlify(tx['unsigned_tx'])
+            unsigned = Transaction.unhexlify(tx['unsigned_tx'])
+            unsigned = SegWitTransaction(unsigned.version, unsigned.ins, unsigned.outs, unsigned.locktime)
             self.assertEqual(unsigned._hash_prevouts(), bytearray(unhexlify(tx['hash_prevouts'])))
 
     def test_hash_sequence(self):
         for tx in self.data:
-            unsigned = SegWitTransaction.unhexlify(tx['unsigned_tx'])
+            unsigned = Transaction.unhexlify(tx['unsigned_tx'])
+            unsigned = SegWitTransaction(unsigned.version, unsigned.ins, unsigned.outs, unsigned.locktime)
             self.assertEqual(unsigned._hash_sequence(), bytearray(unhexlify(tx['hash_sequence'])))
 
     def test_hash_outputs(self):
         for tx in self.data:
-            unsigned = SegWitTransaction.unhexlify(tx['unsigned_tx'])
+            unsigned = Transaction.unhexlify(tx['unsigned_tx'])
+            unsigned = SegWitTransaction(unsigned.version, unsigned.ins, unsigned.outs, unsigned.locktime)
             self.assertEqual(unsigned._hash_outputs(), bytearray(unhexlify(tx['hash_outputs'])))
 
     def test_digest_preimage(self):
         for tx in self.data:
-            unsigned = SegWitTransaction.unhexlify(tx['unsigned_tx'])
+            unsigned = Transaction.unhexlify(tx['unsigned_tx'])
+            unsigned = SegWitTransaction(unsigned.version, unsigned.ins, unsigned.outs, unsigned.locktime)
             for j, txin in enumerate(tx['txins']):
                 if 'digest_preimage' in txin:
                     self.assertEqual(unsigned._get_segwit_digest_preimage(j,
@@ -1124,7 +1236,8 @@ class TestSegwitSigs(unittest.TestCase):
 
     def test_digest(self):
         for tx in self.data:
-            unsigned = SegWitTransaction.unhexlify(tx['unsigned_tx'])
+            unsigned = Transaction.unhexlify(tx['unsigned_tx'])
+            unsigned = SegWitTransaction(unsigned.version, unsigned.ins, unsigned.outs, unsigned.locktime)
             for j, txin in enumerate(tx['txins']):
                 if 'digest' in txin:
                     self.assertEqual(hexlify(unsigned.get_segwit_digest(j,
@@ -1267,7 +1380,132 @@ class TestStrictMode(unittest.TestCase):
         self.assertTrue(isinstance(script.pubkey, StackData))
 
         with self.assertRaises(WrongScriptTypeException):
-            P2pkScript(StackData.unhexlify('00'*30), strict=False)
+            P2pkScript(StackData.unhexlify('00'*30))
+
+
+class TestSolvers(unittest.TestCase):
+
+    def test_nested_locktimes(self):
+        pubk = PublicKey.unhexlify('021c703de670b3b0df446e948f76acecd6e539a6a395b408bbcd711e2744b74a7b')
+        privk = PrivateKey.unhexlify('e2cf56175f5cd5f19e9d1599b99463d769c6e16f1753dfa18aab64cbabeb7b7d')
+        script = IfElseScript(
+            AbsoluteTimelockScript(
+                Locktime(2000),
+                RelativeTimelockScript(
+                    Sequence(5),
+                    P2pkScript(pubk)
+                )
+            ),
+            P2pkScript(pubk)
+        )
+        p2wsh = P2wshV0Script(script)
+        p2sh = P2shScript(p2wsh)
+        solver = P2shSolver(
+            p2wsh,
+            P2wshV0Solver(
+                script,
+                IfElseSolver(
+                    Branch.IF,
+                    AbsoluteTimelockSolver(
+                        Locktime(2000),
+                        RelativeTimelockSolver(
+                            Sequence(5),
+                            P2pkSolver(privk)
+                        )
+                    )
+                )
+            )
+        )
+        self.assertTrue(solver.solves_absolute_locktime())
+        self.assertTrue(solver.solves_relative_locktime())
+        self.assertEqual(solver.get_absolute_locktime(), Locktime(2000))
+        self.assertEqual(solver.get_relative_locktime(), Sequence(5))
+
+        preimage = Stream(bytearray([0]*30))
+        hash160 = preimage.hash160()
+        hash256 = preimage.hash256()
+        script = IfElseScript(
+            AbsoluteTimelockScript(
+                Locktime(2000),
+                Hashlock160Script(
+                    hash160,
+                    RelativeTimelockScript(
+                        Sequence(5),
+                        Hashlock256Script(
+                            hash256,
+                            AbsoluteTimelockScript(
+                                Locktime(3000),
+                                RelativeTimelockScript(
+                                    Sequence(10),
+                                    P2pkScript(pubk)
+                                )
+                            )
+                        )
+                    )
+                )
+            ),
+            P2pkScript(pubk)
+        )
+        p2wsh = P2wshV0Script(script)
+        p2sh = P2shScript(p2wsh)
+        solver = P2shSolver(
+            p2wsh,
+            P2wshV0Solver(
+                script,
+                IfElseSolver(
+                    Branch.IF,
+                    AbsoluteTimelockSolver(
+                        Locktime(2000),
+                        HashlockSolver(
+                            preimage.serialize(),
+                            RelativeTimelockSolver(
+                                Sequence(5),
+                                HashlockSolver(
+                                    preimage.serialize(),
+                                    AbsoluteTimelockSolver(
+                                        Locktime(3000),
+                                        RelativeTimelockSolver(
+                                            Sequence(10),
+                                            P2pkSolver(privk)
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+        self.assertTrue(solver.solves_absolute_locktime())
+        self.assertTrue(solver.solves_relative_locktime())
+        self.assertEqual(solver.get_absolute_locktime(), Locktime(3000))
+        self.assertEqual(solver.get_relative_locktime(), Sequence(10))
+
+        tx = MutableTransaction(
+            2,
+            [
+                MutableTxIn(
+                    '0'*32,
+                    0,
+                    ScriptSig.empty(),
+                    Sequence.max(),
+                    witness=Witness([])
+                )
+            ],
+            [
+                TxOut(
+                    10,
+                    0,
+                    P2pkScript(pubk)
+                )
+            ],
+            Locktime(0)
+        ).spend([TxOut(11, 0, p2sh)], [solver])
+
+        self.assertTrue(isinstance(tx, SegWitTransaction))
+        self.assertEqual(tx.locktime, Locktime(3000))
+        self.assertEqual(tx.ins[0].sequence, Sequence(10))
 
 
 if __name__ == '__main__':
