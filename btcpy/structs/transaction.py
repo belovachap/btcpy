@@ -465,6 +465,32 @@ class Witness(Immutable, HexSerializable, Jsonizable):
 
 class BaseTransaction(HexSerializable, Jsonizable, metaclass=ABCMeta):
 
+    @classmethod
+    def from_json(cls, tx_json):
+        tx = cls(version=tx_json['version'],
+                 locktime=Locktime(tx_json['locktime']),
+                 txid=tx_json['txid'],
+                 ins=[TxIn.from_json(txin_json) for txin_json in tx_json['vin']],
+                 outs=[TxOut.from_json(txout_json) for txout_json in tx_json['vout']])
+        return tx
+
+    @classmethod
+    def unhexlify(cls, string):
+        return cls.deserialize(bytearray(unhexlify(string)))
+
+    @classmethod
+    def deserialize(cls, string):
+        parser = TransactionParser(string)
+        result = parser.get_next_tx(issubclass(cls, Mutable))
+        if parser:
+            raise ValueError('Leftover data after transaction')
+        if not isinstance(result, cls):
+            raise TypeError('Trying to load transaction from wrong transaction serialization')
+        return result
+
+
+class Transaction(BaseTransaction, Immutable):
+
     ''' assemble transaction
     : version - tranasction version (default 1)
     : inputs - list of tx inputs, as TxIn object
@@ -871,7 +897,7 @@ class PeercoinMutableTx(PeercoinTx, MutableTransaction):
         raise NotImplementedError("Peercoin doesn't have SegWit.")
 
 
-class SegWitTransaction(Immutable, HexSerializable, Jsonizable):
+class SegWitTransaction(BaseTransaction, Immutable):
 
     marker = 0x00
     flag = 0x01

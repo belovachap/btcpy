@@ -23,17 +23,17 @@ class InvalidAddress(Exception):
     def is_valid(network, string):
         from ..lib.codecs import CouldNotDecode
 
+
 class Address(metaclass=ABCMeta):
 
     @classmethod
-    @strictness
-    def is_valid(cls, string, strict=None):
+    def is_valid(cls, string):
         try:
-            Address.from_string(network, string)
+            Address.from_string(network)
             return True
         except CouldNotDecode:
             try:
-                SegWitAddress.from_string(network, string)
+                SegWitAddress.from_string(network)
                 return True
             except CouldNotDecode:
                 return False
@@ -72,22 +72,20 @@ class Address(metaclass=ABCMeta):
         return self.__class__.get_codec().encode(self)
 
     @staticmethod
-    @strictness
-    def from_string(string, strict=None):
+    def from_string(string):
         from ..lib.codecs import CouldNotDecode
 
         try:
-            return ClassicAddress.decode(string, strict=strict)
+            return ClassicAddress.decode(string)
         except CouldNotDecode:
             try:
-                return SegWitAddress.decode(string, strict=strict)
+                return SegWitAddress.decode(string)
             except CouldNotDecode:
                 raise InvalidAddress
 
     @classmethod
-    @strictness
-    def decode(cls, string, strict=None):
-        return cls.get_codec().decode(string, strict=strict)
+    def decode(cls, string):
+        return cls.get_codec().decode(string)
 
     def __eq__(self, other):
         return (self.network, self.hash) == (other.network, other.hash)
